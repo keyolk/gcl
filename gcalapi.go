@@ -425,8 +425,17 @@ func apiEventToEvent(calendar string, it apiEvent) *Event {
 	desc := cleanText(it.Description)
 
 	var attendees []string
+	var rooms []string
 	for _, a := range it.Attendees {
 		if a.Resource {
+			// Meeting rooms / equipment come through as resource attendees.
+			name := a.DisplayName
+			if name == "" {
+				name = a.Email
+			}
+			if name != "" {
+				rooms = appendUnique(rooms, name)
+			}
 			continue
 		}
 		name := a.Email
@@ -473,6 +482,7 @@ func apiEventToEvent(calendar string, it apiEvent) *Event {
 		EndAt:         endAt,
 		Title:         title,
 		Location:      loc,
+		Rooms:         rooms,
 		Description:   desc,
 		Calendar:      calendar,
 		AttendeeEmail: firstAttendeeEmail(it),

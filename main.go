@@ -86,6 +86,7 @@ type Event struct {
 	EndAt         time.Time
 	Title         string
 	Location      string
+	Rooms         []string // meeting-room resources (resource=true attendees)
 	Description   string
 	Calendar      string
 	AttendeeEmail string
@@ -390,6 +391,12 @@ func main() {
 		}
 		for _, ev := range events {
 			fmt.Printf("%s %-13s %s\n", ev.StartDate.Format("2006-01-02"), ev.TimeLabel(), ev.Title)
+			if ev.Location != "" {
+				fmt.Printf("  location: %s\n", ev.Location)
+			}
+			if len(ev.Rooms) > 0 {
+				fmt.Printf("  rooms: %s\n", strings.Join(ev.Rooms, ", "))
+			}
 			if s := ev.attendeeSummary(); s != "" {
 				fmt.Printf("  attendees: %s\n", s)
 			}
@@ -1389,7 +1396,9 @@ func (m model) View() string {
 	headerContent := calPill + meta + tzPill
 	headerLine := topBarStyle.Width(max(0, m.width-2)).Render(truncate(headerContent, max(1, m.width-2)))
 
-	contentHeight := max(4, m.height-4)
+	// The frame is header (1) + body + status (1) + hint (1); body must therefore
+	// be height-3 rows so the whole thing fills exactly m.height.
+	contentHeight := max(4, m.height-3)
 	bodyWidth := max(20, m.width-2)
 	var body string
 	if m.loading {
@@ -1719,34 +1728,49 @@ func padCenter(s string, width int) string {
 // fit on screen. Each row costs 1 line; day headers cost 1. A viewport keeps
 // the selected event visible.
 func (m model) viewAgendaCards(width, height int) string {
+	if height <= 0 {
+		return ""
+	}
 	var lines []string
 	innerWidth := max(20, width-1)
 	start := m.agendaStartIndex(height)
 	current := ""
-	used := 0
 	selected := m.selectedEvent()
 	now := time.Now()
 	nowShown := false
 	nowLine := func() string {
 		return nowLineStyle.Render(" ── now " + now.In(m.tz()).Format("15:04") + " " + strings.Repeat("─", max(2, innerWidth-14)))
 	}
+	// truncated marks that not everything fit; the last row is replaced with a
+	// "… more" hint. Returns true when the caller should stop emitting.
+	truncated := func() bool {
+		if len(lines) >= height {
+			if height > 0 {
+				lines[height-1] = mutedStyle.Render("  … more")
+			}
+			return true
+		}
+		return false
+	}
+	// The "now" divider marks the boundary between past and upcoming events. It
+	// is only meaningful when that boundary actually falls within the rendered
+	// range: the previous event must be in the past and the current one in the
+	// future. If the first visible event is already upcoming (we scrolled past
+	// "now") or every event is in the past, we don't draw a floating divider.
+	prevPast := false
 	for i := start; i < len(m.events); i++ {
 		ev := &m.events[i]
-		// Drop the "now" divider right before the first event that starts at or
-		// after the current moment (i.e. the next upcoming event).
-		if !nowShown && !eventSortInstant(ev).Before(now) {
-			if used+1 > height {
-				lines = append(lines, mutedStyle.Render("  … more"))
+		if !nowShown && prevPast && !eventSortInstant(ev).Before(now) {
+			if truncated() {
 				break
 			}
 			lines = append(lines, nowLine())
-			used++
 			nowShown = true
 		}
 		day := ev.StartDate.Format("Mon Jan 02")
 		if day != current {
 			current = day
-			if used+1 > height {
+			if truncated() {
 				break
 			}
 			hdr := " " + day
@@ -1754,20 +1778,39 @@ func (m model) viewAgendaCards(width, height int) string {
 				hdr = " • " + day + "  (today)"
 			}
 			lines = append(lines, dayHeaderStyle.Render(hdr))
-			used++
 		}
-		if used+1 > height {
-			lines = append(lines, mutedStyle.Render("  … more"))
+		if truncated() {
 			break
 		}
 		lines = append(lines, m.eventRow(ev, selected == ev, innerWidth))
-		used++
-	}
-	// Every loaded event is in the past — anchor the divider at the bottom.
-	if !nowShown && used+1 <= height {
-		lines = append(lines, nowLine())
+		prevPast = eventSortInstant(ev).Before(now)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// locationWithoutRooms returns the event location with any comma-separated parts
+// that merely repeat a meeting room removed, so 📍 shows the real place/link and
+// 🏛 shows the rooms without duplication. Falls back to the raw location.
+func locationWithoutRooms(ev *Event) string {
+	if ev.Location == "" {
+		return ""
+	}
+	if len(ev.Rooms) == 0 {
+		return ev.Location
+	}
+	roomSet := make(map[string]bool, len(ev.Rooms))
+	for _, r := range ev.Rooms {
+		roomSet[strings.TrimSpace(strings.ToLower(r))] = true
+	}
+	var kept []string
+	for _, part := range strings.Split(ev.Location, ",") {
+		p := strings.TrimSpace(part)
+		if p == "" || roomSet[strings.ToLower(p)] {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return strings.Join(kept, ", ")
 }
 
 // eventRow is a single compact line: [time] title  badges. The time is a filled
@@ -1777,6 +1820,9 @@ func (m model) eventRow(ev *Event, selected bool, width int) string {
 	badges := ""
 	if n := len(ev.Attendees); n > 0 {
 		badges += fmt.Sprintf(" 👥%d", n)
+	}
+	if ev.Location != "" || len(ev.Rooms) > 0 {
+		badges += " 📍"
 	}
 	if ev.otherLinkCount() > 0 {
 		badges += " ↗"
@@ -1843,8 +1889,11 @@ func (m model) viewDayDetail(width, height int) string {
 			line = selectedRowStyle.Render(truncate("▸ "+tm+" "+ev.Title+badges, iw))
 		}
 		lines = append(lines, line)
-		if ev.Location != "" {
-			lines = append(lines, mutedStyle.Render("   📍 "+truncate(ev.Location, iw-5)))
+		if loc := locationWithoutRooms(ev); loc != "" {
+			lines = append(lines, mutedStyle.Render("   📍 "+truncate(loc, iw-5)))
+		}
+		if len(ev.Rooms) > 0 {
+			lines = append(lines, mutedStyle.Render("   🏛  "+truncate(strings.Join(ev.Rooms, ", "), iw-5)))
 		}
 	}
 	lines = append(lines, "")
@@ -1866,8 +1915,11 @@ func (m model) viewDetailCard(width, height int) string {
 	lines = append(lines, sectionTitleStyle.Render(truncate("  "+ev.Title+"  ", max(10, width-4))))
 	lines = append(lines, "")
 	lines = append(lines, pillStyle.Render(ev.StartDate.Format("Mon Jan 02"))+" "+pillStyle.Render(m.timeLabel(ev)))
-	if ev.Location != "" {
-		lines = append(lines, "📍 "+wrap(ev.Location, max(10, width-4)))
+	if loc := locationWithoutRooms(ev); loc != "" {
+		lines = append(lines, "📍 "+wrap(loc, max(10, width-4)))
+	}
+	if len(ev.Rooms) > 0 {
+		lines = append(lines, "🏛  "+wrap(strings.Join(ev.Rooms, ", "), max(10, width-4)))
 	}
 	if ev.Calendar != "" {
 		lines = append(lines, mutedStyle.Render("Calendar: "+displayNameForCalendar(ev.Calendar)))
@@ -1939,6 +1991,7 @@ func (m model) searchMatches() []searchMatch {
 			ev.TimeLabel(),
 			ev.Title,
 			ev.Location,
+			strings.Join(ev.Rooms, " "),
 			ev.Description,
 			ev.Calendar,
 			ev.AttendeeEmail,
