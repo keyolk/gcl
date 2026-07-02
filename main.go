@@ -21,6 +21,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 )
 
 // calendarAliases maps short names to a calendar email/id/display-name. It is
@@ -117,9 +118,9 @@ func (e Event) attendeeSummary() string {
 		short = append(short, strings.SplitN(n, "@", 2)[0])
 	}
 	if len(short) <= 3 {
-		return fmt.Sprintf("%d · %s", len(names), strings.Join(short, ", "))
+		return fmt.Sprintf("%d | %s", len(names), strings.Join(short, ", "))
 	}
-	return fmt.Sprintf("%d · %s +%d", len(names), strings.Join(short[:3], ", "), len(short)-3)
+	return fmt.Sprintf("%d | %s +%d", len(names), strings.Join(short[:3], ", "), len(short)-3)
 }
 
 // otherLinks returns links other than the Google Calendar event page (which is
@@ -441,7 +442,7 @@ func main() {
 		jumpUnit:    settings.defaultStep,
 		anchor:      anchor,
 		loading:     true,
-		status:      "loading…",
+		status:      "loading~",
 		nextReqID:   1,
 		inflightReq: 1,
 	}
@@ -528,9 +529,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeNormal
 		n := len(m.create.attendees)
 		if n > 0 {
-			m.status = fmt.Sprintf("created “%s” · invited %d", m.create.title, n)
+			m.status = fmt.Sprintf("created \"%s\" | invited %d", m.create.title, n)
 		} else {
-			m.status = fmt.Sprintf("created “%s”", m.create.title)
+			m.status = fmt.Sprintf("created \"%s\"", m.create.title)
 		}
 		m.loading = true
 		return m, m.reload()
@@ -567,7 +568,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cal := m.calendar
 			id := ev.ID
 			notify := len(ev.Attendees) > 0
-			m.status = "deleting…"
+			m.status = "deleting~"
 			return m, func() tea.Msg {
 				err := deleteEvent(cal, id, notify)
 				return deletedMsg{err: err}
@@ -637,7 +638,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.choosePicker(items[max(0, min(m.picker.index, len(items)-1))])
 			}
 			// Calendar picker: no candidate matched, but the user typed a raw
-			// email/calendar id — open it directly instead of doing nothing.
+			// email/calendar id - open it directly instead of doing nothing.
 			if m.mode == modeCalendarPicker {
 				raw := strings.TrimSpace(m.input)
 				if strings.Contains(raw, "@") {
@@ -732,7 +733,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.jumpUnit = "month"
 		m.status = "step: month"
 	case "g", "v":
-		// Toggle grid view. g → week grid; from grid → back to list.
+		// Toggle grid view. g -> week grid; from grid -> back to list.
 		if m.view == viewList {
 			m.view = viewWeek
 			m.resetGridTop()
@@ -776,7 +777,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				items[i] = pickerItem{label: link, value: link}
 			}
 			m.mode = modeLinkPicker
-			m.picker = pickerState{title: "Links — Enter opens", kind: pickerLinks, items: items}
+			m.picker = pickerState{title: "Links - Enter opens", kind: pickerLinks, items: items}
 			m.input = ""
 		} else {
 			m.status = "no extra links (Enter opens the calendar event)"
@@ -789,7 +790,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				items = append(items, pickerItem{label: a, value: email})
 			}
 			m.mode = modeAttendeePicker
-			m.picker = pickerState{title: "Attendees — Enter opens their calendar", kind: pickerAttendee, items: items}
+			m.picker = pickerState{title: "Attendees - Enter opens their calendar", kind: pickerAttendee, items: items}
 			m.input = ""
 		} else {
 			m.status = "selected event has no attendees"
@@ -800,7 +801,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchIndex = 0
 	case "e":
 		m.mode = modeCalendarPicker
-		m.picker = pickerState{title: "Calendar — type to filter, Enter to open", kind: pickerCalendar, items: calendarPickerItems()}
+		m.picker = pickerState{title: "Calendar - type to filter, Enter to open", kind: pickerCalendar, items: calendarPickerItems()}
 		m.input = ""
 	case "N":
 		m.mode = modeCreate
@@ -831,7 +832,7 @@ func (m *model) scheduleFetch() tea.Cmd {
 	m.nextReqID++
 	m.inflightReq = m.nextReqID
 	m.loading = true
-	m.status = "loading…"
+	m.status = "loading~"
 	return m.loadCmd(m.inflightReq)
 }
 
@@ -933,7 +934,7 @@ func eventSortInstant(ev *Event) time.Time {
 }
 
 // firstEventIndexAtOrAfterNow returns the first event starting at/after the
-// current instant — the event just below the "now" divider. Falls back to the
+// current instant - the event just below the "now" divider. Falls back to the
 // last event when everything is in the past.
 func (m model) firstEventIndexAtOrAfterNow() int {
 	now := time.Now()
@@ -1035,7 +1036,7 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch key {
-		// While editing a text field, j/k must TYPE — only Tab/⇧Tab (and arrows,
+		// While editing a text field, j/k must TYPE - only Tab/S-Tab (and arrows,
 		// which are inert in a single-line field) move between fields.
 		case "tab", "down":
 			c.editingField = false
@@ -1344,7 +1345,7 @@ func (m model) choosePicker(it pickerItem) (tea.Model, tea.Cmd) {
 		m.calendarKey = it.value
 		m.calendar = it.value
 		m.loading = true
-		m.status = "loading…"
+		m.status = "loading~"
 		rememberCalendar(it.value)
 		return m, m.reload()
 	}
@@ -1393,14 +1394,14 @@ func fitPane(s string, width, height int) string {
 
 func (m model) View() string {
 	if m.width <= 0 {
-		return "loading…"
+		return "loading~"
 	}
 	viewName := map[viewMode]string{viewList: "LIST", viewWeek: "WEEK", viewMonth: "MONTH"}[m.view]
 	calPill := calPillStyle.Render("📅 " + m.calendarDisplayName())
 	tzPill := tzPillStyle.Render("🕓 " + m.tzLabel())
-	metaText := fmt.Sprintf("%s · %s", viewName, m.anchor.Format("2006-01-02"))
+	metaText := fmt.Sprintf("%s | %s", viewName, m.anchor.Format("2006-01-02"))
 	if m.view == viewList {
-		metaText = fmt.Sprintf("%s · %s · step:%s", viewName, m.anchor.Format("2006-01-02"), m.jumpUnit)
+		metaText = fmt.Sprintf("%s | %s | step:%s", viewName, m.anchor.Format("2006-01-02"), m.jumpUnit)
 	}
 	meta := metaStyle.Render(" " + metaText + " ")
 	headerContent := calPill + meta + tzPill
@@ -1412,7 +1413,7 @@ func (m model) View() string {
 	bodyWidth := max(20, m.width-2)
 	var body string
 	if m.loading {
-		body = cardStyle.Width(max(20, bodyWidth-4)).Render("loading calendar events…")
+		body = cardStyle.Width(max(20, bodyWidth-4)).Render("loading calendar events~")
 	} else if m.err != nil {
 		body = errorStyle.Render(wrap(m.err.Error(), bodyWidth))
 	} else {
@@ -1437,7 +1438,7 @@ func (m model) View() string {
 			top := fitPane(schedule(bodyWidth, topH), bodyWidth, topH)
 			bottom := fitPane(m.viewDetailCard(bodyWidth, detailH), bodyWidth, detailH)
 			body = top + "\n" + bottom
-		default: // no split — too small for a detail pane
+		default: // no split - too small for a detail pane
 			body = schedule(bodyWidth, contentHeight)
 		}
 	}
@@ -1552,24 +1553,24 @@ func ansiTruncate(s string, width int) string {
 func (m model) shortcutHint() string {
 	switch m.mode {
 	case modeSearch:
-		return " / fuzzy search  ·  ↑/↓ move  ·  Enter jump  ·  ESC cancel "
+		return " / fuzzy search  |  up/dn move  |  Enter jump  |  ESC cancel "
 	case modeCalendarPicker:
-		return " e calendar  ·  type to filter  ·  ↑/↓ move  ·  Enter open  ·  ESC cancel "
+		return " e calendar  |  type to filter  |  up/dn move  |  Enter open  |  ESC cancel "
 	case modeLinkPicker:
-		return " L links  ·  type to filter  ·  ↑/↓ move  ·  Enter open  ·  ESC cancel "
+		return " L links  |  type to filter  |  up/dn move  |  Enter open  |  ESC cancel "
 	case modeAttendeePicker:
-		return " A attendees  ·  Enter → open their calendar  ·  ↑/↓ move  ·  ESC cancel "
+		return " A attendees  |  Enter -> open their calendar  |  up/dn move  |  ESC cancel "
 	case modeHelp:
-		return " help  ·  ESC / ? close "
+		return " help  |  ESC / ? close "
 	default:
 		if m.view != viewList {
-			return " h/l ±day · j/k ±week · g→list · M month-grid · n now · A attendees · L links · E edit · X del · N new · e cal · Z tz · / · ? · q "
+			return " h/l +/-day | j/k +/-week | g->list | M month-grid | n now | A attendees | L links | E edit | X del | N new | e cal | Z tz | / | ? | q "
 		}
-		return " h/l move(step) · d/w/m step · j/k select · n now · g grid · Z tz · N new · E edit · X del · ↵ open · L links · A attendees · e cal · / search · ? · q "
+		return " h/l move(step) | d/w/m step | j/k select | n now | g grid | Z tz | N new | E edit | X del | ↵ open | L links | A attendees | e cal | / search | ? | q "
 	case modeCreate:
-		return " new/edit event  ·  type to edit  ·  Enter next/save  ·  ESC back  ·  Space toggle attendee "
+		return " new/edit event  |  type to edit  |  Enter next/save  |  ESC back  |  Space toggle attendee "
 	case modeConfirmDelete:
-		return " delete event?  ·  y/Enter confirm  ·  N/ESC cancel "
+		return " delete event?  |  y/Enter confirm  |  N/ESC cancel "
 	}
 }
 
@@ -1664,7 +1665,7 @@ func (m model) viewGrid(width, height int) string {
 			isToday := sameDay(day, time.Now())
 			label := day.Format("1/2")
 			if isToday {
-				label = "•" + label
+				label = "*" + label
 			}
 			cnt := len(byDay[day.Format("2006-01-02")])
 			if cnt > 0 {
@@ -1749,14 +1750,14 @@ func (m model) viewAgendaCards(width, height int) string {
 	now := time.Now()
 	nowShown := false
 	nowLine := func() string {
-		return nowLineStyle.Render(" ── now " + now.In(m.tz()).Format("15:04") + " " + strings.Repeat("─", max(2, innerWidth-14)))
+		return nowLineStyle.Render(" -- now " + now.In(m.tz()).Format("15:04") + " " + strings.Repeat("-", max(2, innerWidth-14)))
 	}
 	// truncated marks that not everything fit; the last row is replaced with a
-	// "… more" hint. Returns true when the caller should stop emitting.
+	// "~ more" hint. Returns true when the caller should stop emitting.
 	truncated := func() bool {
 		if len(lines) >= height {
 			if height > 0 {
-				lines[height-1] = mutedStyle.Render("  … more")
+				lines[height-1] = mutedStyle.Render("  ~ more")
 			}
 			return true
 		}
@@ -1785,7 +1786,7 @@ func (m model) viewAgendaCards(width, height int) string {
 			}
 			hdr := " " + day
 			if sameDay(ev.StartDate, now) {
-				hdr = " • " + day + "  (today)"
+				hdr = " * " + day + "  (today)"
 			}
 			lines = append(lines, dayHeaderStyle.Render(hdr))
 		}
@@ -1835,7 +1836,7 @@ func (m model) eventRow(ev *Event, selected bool, width int) string {
 		badges += " 📍"
 	}
 	if ev.otherLinkCount() > 0 {
-		badges += " ↗"
+		badges += " >"
 	}
 	titleRoom := max(6, width-lipgloss.Width(tl)-lipgloss.Width(badges)-4)
 	title := truncate(ev.Title, titleRoom)
@@ -1892,7 +1893,7 @@ func (m model) viewDayDetail(width, height int) string {
 			badges += fmt.Sprintf(" 👥%d", n)
 		}
 		if ev.otherLinkCount() > 0 {
-			badges += " ↗"
+			badges += " >"
 		}
 		line := pillStyle.Render(tm) + " " + truncate(ev.Title, max(6, iw-lipgloss.Width(tm)-lipgloss.Width(badges)-2)) + mutedStyle.Render(badges)
 		if m.focusPane == focusDetail && i == max(0, min(m.gridDetail, len(evs)-1)) {
@@ -1943,7 +1944,7 @@ func (m model) viewDetailCard(width, height int) string {
 		lines = append(lines, mutedStyle.Render(fmt.Sprintf("Attendees (%d)", len(attendees))))
 		for i, a := range attendees {
 			if i >= 12 {
-				lines = append(lines, mutedStyle.Render(fmt.Sprintf("… +%d more", len(attendees)-12)))
+				lines = append(lines, mutedStyle.Render(fmt.Sprintf("~ +%d more", len(attendees)-12)))
 				break
 			}
 			lines = append(lines, "- "+truncate(prettyAttendee(a), max(10, width-5)))
@@ -1959,7 +1960,7 @@ func (m model) viewDetailCard(width, height int) string {
 		lines = append(lines, linkStyle.Render("Links"))
 		for i, link := range ev.Links {
 			if i >= 6 {
-				lines = append(lines, mutedStyle.Render("… more links"))
+				lines = append(lines, mutedStyle.Render("~ more links"))
 				break
 			}
 			lines = append(lines, linkStyle.Render(fmt.Sprintf("%d. %s", i+1, truncate(link, max(10, width-7)))))
@@ -2086,9 +2087,9 @@ func calendarPickerItems() []pickerItem {
 	}
 
 	for _, r := range loadRecentCalendars() {
-		label := "★ " + r
+		label := "* " + r
 		if name := displayNameForCalendar(r); name != "" && name != r {
-			label = "★ " + name
+			label = "* " + name
 		}
 		add(label, r)
 	}
@@ -2121,18 +2122,18 @@ func (m model) viewCreate() string {
 	if c.editing {
 		formTitle = "Edit event"
 	}
-	lines = append(lines, sectionTitleStyle.Render(fmt.Sprintf(" %s · %s ", formTitle, stepName)))
+	lines = append(lines, sectionTitleStyle.Render(fmt.Sprintf(" %s | %s ", formTitle, stepName)))
 	lines = append(lines, mutedStyle.Render("on "+m.calendarDisplayName()))
 	lines = append(lines, "")
 
 	field := func(label, val string, active bool) string {
 		if val == "" {
-			val = "—"
+			val = "-"
 		}
 		line := fmt.Sprintf("%-10s %s", label, truncate(val, max(4, inner-lipgloss.Width(label)-3)))
 		if active {
 			if c.editingField {
-				return selectedStyle.Width(inner).Render(line + "▏")
+				return selectedStyle.Width(inner).Render(line + "|")
 			}
 			return selectedRowStyle.Render("▸ " + line)
 		}
@@ -2144,12 +2145,12 @@ func (m model) viewCreate() string {
 	lines = append(lines, field("Start", c.start, c.step == stepStart))
 	lines = append(lines, field("Duration", c.durationStr+"m", c.step == stepDuration))
 
-	// Attendees block — rendered through the same field() helper so its label
+	// Attendees block - rendered through the same field() helper so its label
 	// lines up with Title/Date/Start/Duration. field() appends the edit cursor.
 	atts := sortedKeys(c.selected)
 	attVal := fmt.Sprintf("(%d)", len(atts))
 	if c.step == stepAttendees && c.editingField {
-		attVal = fmt.Sprintf("(%d) · filter: %s", len(atts), c.attInput)
+		attVal = fmt.Sprintf("(%d) | filter: %s", len(atts), c.attInput)
 	}
 	lines = append(lines, field("Attendees", attVal, c.step == stepAttendees))
 	if c.step == stepAttendees {
@@ -2174,10 +2175,10 @@ func (m model) viewCreate() string {
 	} else if len(atts) > 0 {
 		for i, a := range atts {
 			if i >= 4 {
-				lines = append(lines, mutedStyle.Render(fmt.Sprintf("  … +%d more", len(atts)-4)))
+				lines = append(lines, mutedStyle.Render(fmt.Sprintf("  ~ +%d more", len(atts)-4)))
 				break
 			}
-			lines = append(lines, "  · "+truncate(a, inner-4))
+			lines = append(lines, "  | "+truncate(a, inner-4))
 		}
 	}
 
@@ -2189,12 +2190,12 @@ func (m model) viewCreate() string {
 		lines = append(lines, errorStyle.Render(fmt.Sprintf("⚠ invitation emails will be sent to %d people", len(atts))))
 	}
 	if c.submitting {
-		lines = append(lines, statusStyle.Render("creating…"))
+		lines = append(lines, statusStyle.Render("creating~"))
 	} else {
 		if c.editingField {
-			lines = append(lines, mutedStyle.Render("ESC blur field · Enter save · Tab/⇧Tab next field · Space toggle attendee"))
+			lines = append(lines, mutedStyle.Render("ESC blur field | Enter save | Tab/S-Tab next field | Space toggle attendee"))
 		} else {
-			lines = append(lines, mutedStyle.Render("j/k move field · Enter/i edit field · Enter on any field saves · ESC close"))
+			lines = append(lines, mutedStyle.Render("j/k move field | Enter/i edit field | Enter on any field saves | ESC close"))
 		}
 	}
 	if c.err != "" {
@@ -2213,13 +2214,13 @@ func (m model) viewConfirmDelete() string {
 	lines = append(lines, "")
 	if ev != nil {
 		lines = append(lines, pillStyle.Render(m.timeLabel(ev))+" "+truncate(ev.Title, max(10, w-16)))
-		lines = append(lines, mutedStyle.Render(ev.StartDate.Format("Mon Jan 02")+" · "+m.calendarDisplayName()))
+		lines = append(lines, mutedStyle.Render(ev.StartDate.Format("Mon Jan 02")+" | "+m.calendarDisplayName()))
 		if n := len(ev.Attendees); n > 0 {
 			lines = append(lines, errorStyle.Render(fmt.Sprintf("⚠ cancellation notice will be sent to %d people", n)))
 		}
 	}
 	lines = append(lines, "")
-	lines = append(lines, mutedStyle.Render("y/Enter delete · n/ESC cancel"))
+	lines = append(lines, mutedStyle.Render("y/Enter delete | n/ESC cancel"))
 	h := min(len(lines)+2, max(6, m.height-4))
 	return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 }
@@ -2268,7 +2269,7 @@ func displayNameForCalendar(cal string) string {
 	if cal == "" {
 		return cal
 	}
-	// group/resource ids → look up the real name from calendarList cache
+	// group/resource ids -> look up the real name from calendarList cache
 	if strings.Contains(cal, "group.calendar.google.com") || strings.Contains(cal, "resource.calendar.google.com") {
 		if cals, err := listCalendars(); err == nil {
 			for _, c := range cals {
@@ -2288,7 +2289,7 @@ func displayNameForCalendar(cal string) string {
 		if strings.HasPrefix(local, "c_") && len(local) > 20 {
 			return shortCalendarID(cal)
 		}
-		// jace.son → Jace Son
+		// jace.son -> Jace Son
 		parts := strings.FieldsFunc(local, func(r rune) bool { return r == '.' || r == '_' || r == '-' })
 		for i, p := range parts {
 			if p != "" {
@@ -2301,14 +2302,14 @@ func displayNameForCalendar(cal string) string {
 }
 
 // shortCalendarID collapses an opaque group id into a compact, still-copyable
-// hint like "group:c_abcd1234…" so the UI never shows a full 60-char id.
+// hint like "group:c_abcd1234~" so the UI never shows a full 60-char id.
 func shortCalendarID(cal string) string {
 	local := cal
 	if i := strings.IndexByte(cal, '@'); i > 0 {
 		local = cal[:i]
 	}
 	if len(local) > 12 {
-		local = local[:12] + "…"
+		local = local[:12] + "~"
 	}
 	return "group:" + local
 }
@@ -2328,7 +2329,7 @@ func (m model) calendarLabel() string {
 	if m.calendarKey == m.calendar {
 		return m.calendar
 	}
-	return m.calendarKey + " → " + m.calendar
+	return m.calendarKey + " -> " + m.calendar
 }
 
 // popupSize returns a right-bottom modal's inner dimensions.
@@ -2385,7 +2386,7 @@ func (m model) viewPopup() string {
 		rows := max(1, h-4)
 		var lines []string
 		lines = append(lines, sectionTitleStyle.Render(" Search "))
-		lines = append(lines, selectedStyle.Width(inner).Render("/ "+m.input+"▏"))
+		lines = append(lines, selectedStyle.Width(inner).Render("/ "+m.input+"|"))
 		if len(matches) == 0 {
 			lines = append(lines, mutedStyle.Render("No matches"))
 		} else {
@@ -2402,7 +2403,7 @@ func (m model) viewPopup() string {
 				}
 			}
 		}
-		lines = append(lines, mutedStyle.Render("↑/↓ move · Enter jump · ESC cancel"))
+		lines = append(lines, mutedStyle.Render("up/dn move | Enter jump | ESC cancel"))
 		return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 	}
 
@@ -2413,7 +2414,7 @@ func (m model) viewPopup() string {
 	rows := max(1, h-4)
 	var lines []string
 	lines = append(lines, sectionTitleStyle.Render(" "+m.picker.title+" "))
-	lines = append(lines, selectedStyle.Width(inner).Render("› "+m.input+"▏"))
+	lines = append(lines, selectedStyle.Width(inner).Render("› "+m.input+"|"))
 	if len(items) == 0 {
 		if m.mode == modeCalendarPicker && strings.Contains(m.input, "@") {
 			lines = append(lines, linkStyle.Render("↵ open this calendar directly: "+truncate(strings.TrimSpace(m.input), inner-4)))
@@ -2435,7 +2436,7 @@ func (m model) viewPopup() string {
 			}
 		}
 	}
-	lines = append(lines, mutedStyle.Render("type filter · ↑/↓ move · Enter select · ESC cancel"))
+	lines = append(lines, mutedStyle.Render("type filter | up/dn move | Enter select | ESC cancel"))
 	return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 }
 
@@ -2469,8 +2470,8 @@ func (m model) focusDayEvents() []*Event {
 }
 
 // currentActionEvent is the event that A/L/E/x/Enter operate on.
-// List view → the selected agenda event.
-// Grid view → the selected event inside the detail pane when it has focus,
+// List view -> the selected agenda event.
+// Grid view -> the selected event inside the detail pane when it has focus,
 // otherwise the first event of the focused day.
 func (m model) currentActionEvent() *Event {
 	if m.view == viewList {
@@ -2498,7 +2499,7 @@ func (m *model) clampGridDetail() {
 }
 
 // openPrimary always opens the Google Calendar event page. Other links (zoom,
-// docs, …) are only reachable via the L links picker.
+// docs, ~) are only reachable via the L links picker.
 func (m model) openPrimary() tea.Cmd {
 	ev := m.currentActionEvent()
 	if ev == nil {
@@ -2781,8 +2782,46 @@ func parseDate(value string) (time.Time, error) {
 func cleanText(value string) string {
 	value = html.UnescapeString(value)
 	value = tagRe.ReplaceAllString(value, " ")
+	value = sanitizeWidth(value)
 	value = strings.Join(strings.Fields(value), " ")
 	return value
+}
+
+// sanitizeWidth strips characters whose display width is unreliable across
+// terminals — variation selectors (an emoji like 🎙️ is U+1F399 + VS16: some
+// terminals draw 1 cell, others 2, and width libraries disagree), zero-width
+// joiners/marks, and any rune whose width differs between the default and
+// East-Asian ("ambiguous chars are double width") terminal modes. Event text
+// (titles, locations) is user-authored, so anything unstable here desyncs
+// every row after it.
+func sanitizeWidth(value string) string {
+	var b strings.Builder
+	b.Grow(len(value))
+	for _, r := range value {
+		switch {
+		case r == 0xFE0E || r == 0xFE0F: // variation selectors (emoji/text style)
+			continue
+		case r == 0x200B || r == 0x200C || r == 0x200D || r == 0xFEFF: // zero-widths
+			continue
+		case r >= 0x80 && unstableWidth(r):
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// eawCond mirrors a KR/JP terminal that renders East-Asian-ambiguous glyphs
+// double-width; comparing against the default condition finds every rune whose
+// on-screen width can differ from what lipgloss computes.
+var eawCond = runewidth.Condition{EastAsianWidth: true}
+
+// unstableWidth reports whether the rune's display width differs between the
+// default and East-Asian-width terminal modes (e.g. ‼ ★ ○ → arrows, and
+// text-presentation emoji like 🎙 that some terminals draw 2 cells wide).
+func unstableWidth(r rune) bool {
+	return runewidth.RuneWidth(r) != eawCond.RuneWidth(r)
 }
 
 func uniqueLinks(parts []string) []string {
@@ -2875,18 +2914,18 @@ func helpLines() []string {
 		tzHint = "local"
 	}
 	return []string{
-		"Views   list (agenda) · g week-grid · M month-grid · g back to list",
-		"List    h/l move by step · d/w/m set step (day/week/month) · j/k select",
-		"Grid    h/l ±day · j/k ±week · focus cursor only; calendar stays put",
+		"Views   list (agenda) | g week-grid | M month-grid | g back to list",
+		"List    h/l move by step | d/w/m set step (day/week/month) | j/k select",
+		"Grid    h/l +/-day | j/k +/-week | focus cursor only; calendar stays put",
 		"        detail pane splits right (wide) or bottom (tall); A/L/E/X act on focus day",
-		"Common  n jump to now (today, else nearest upcoming) · r refresh · Z timezone (" + tzHint + ")",
+		"Common  n jump to now (today, else nearest upcoming) | r refresh | Z timezone (" + tzHint + ")",
 		"Open    Enter opens the Google Calendar event page",
-		"L       other links picker (zoom, docs, …) (fuzzy)",
-		"A       attendees picker → open that person's calendar",
-		"e       calendar picker (recent ★, subscribed, aliases; fuzzy)",
-		"N       new event · E edit selected · X delete (confirm)",
+		"L       other links picker (zoom, docs, ~) (fuzzy)",
+		"A       attendees picker -> open that person's calendar",
+		"e       calendar picker (recent *, subscribed, aliases; fuzzy)",
+		"N       new event | E edit selected | X delete (confirm)",
 		"/       fuzzy search across loaded events, Enter jumps",
-		"q       quit  ·  ESC backs out of any overlay",
+		"q       quit  |  ESC backs out of any overlay",
 		"",
 		"Aliases defined in " + configPath() + " ([aliases] section)",
 	}
@@ -2903,7 +2942,7 @@ func truncate(s string, width int) string {
 	for len(runes) > 0 && lipgloss.Width(string(runes))+1 > width {
 		runes = runes[:len(runes)-1]
 	}
-	return string(runes) + "…"
+	return string(runes) + "~"
 }
 
 func wrap(s string, width int) string {
@@ -2943,7 +2982,7 @@ func truncateLines(s string, maxLines int, width int) string {
 		for _, line := range wrapped {
 			if len(out) >= maxLines {
 				if len(out) > 0 {
-					out[len(out)-1] = truncate(out[len(out)-1], max(1, width-1)) + "…"
+					out[len(out)-1] = truncate(out[len(out)-1], max(1, width-1)) + "~"
 				}
 				return strings.Join(out, "\n")
 			}
