@@ -1,0 +1,9 @@
+# build output
+/gcl
+/tmp/
+*.out
+
+# editor
+.DS_Store
+.idea/
+.vscode/
