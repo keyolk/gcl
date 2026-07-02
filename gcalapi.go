@@ -448,11 +448,11 @@ func apiEventToEvent(calendar string, it apiEvent) *Event {
 		label := name
 		switch a.ResponseStatus {
 		case "accepted":
-			label = "✓ " + name
+			label = "[y] " + name
 		case "declined":
-			label = "✗ " + name
+			label = "[n] " + name
 		case "tentative":
-			label = "? " + name
+			label = "[?] " + name
 		}
 		attendees = appendUnique(attendees, label)
 	}

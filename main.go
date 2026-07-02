@@ -323,7 +323,17 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("240")).
 			Padding(0, 1)
+	// detailStyle intentionally uses NO border of any kind: many terminals treat
+	// box-drawing and other ambiguous-width glyphs as double-width, which desyncs
+	// the frame and clips the bottom edge. Plain-space padding (always width 1)
+	// gives separation with zero ambiguous-width characters.
 	detailStyle = lipgloss.NewStyle().
+			PaddingLeft(2).
+			PaddingRight(1)
+	// modalStyle is for floating overlays (create/edit, pickers, confirm) where a
+	// visible frame helps them stand out over the body. It keeps a rounded border;
+	// overlays are short so the occasional double-width terminal quirk is minor.
+	modalStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("63")).
 			Padding(0, 1)
@@ -1863,8 +1873,8 @@ func (m model) agendaStartIndex(height int) int {
 
 // viewDayDetail lists every event on the focused day (grid detail pane).
 func (m model) viewDayDetail(width, height int) string {
-	iw := max(16, width-4)
-	inner := max(3, height-2)
+	iw := max(16, width-3)
+	inner := max(3, height)
 	evs := m.focusDayEvents()
 	var lines []string
 	lines = append(lines, sectionTitleStyle.Render(truncate("  "+m.anchor.Format("Mon Jan 02")+"  ", max(10, iw))))
@@ -1890,16 +1900,16 @@ func (m model) viewDayDetail(width, height int) string {
 		}
 		lines = append(lines, line)
 		if loc := locationWithoutRooms(ev); loc != "" {
-			lines = append(lines, mutedStyle.Render("   📍 "+truncate(loc, iw-5)))
+			lines = append(lines, mutedStyle.Render("     @ "+truncate(loc, iw-7)))
 		}
 		if len(ev.Rooms) > 0 {
-			lines = append(lines, mutedStyle.Render("   🏛  "+truncate(strings.Join(ev.Rooms, ", "), iw-5)))
+			lines = append(lines, mutedStyle.Render("     room: "+truncate(strings.Join(ev.Rooms, ", "), iw-11)))
 		}
 	}
 	lines = append(lines, "")
-	lines = append(lines, mutedStyle.Render("tab detail focus · j/k event · A/L/E/x act · enter open calendar"))
+	lines = append(lines, mutedStyle.Render("tab detail focus | j/k event | A/L/E/X act | enter open calendar"))
 	content := truncateLines(strings.Join(lines, "\n"), inner, iw)
-	return detailStyle.Width(max(28, width-2)).Height(inner).Render(content)
+	return detailStyle.Width(max(28, width)).Height(inner).Render(content)
 }
 
 func (m model) viewDetailCard(width, height int) string {
@@ -1909,17 +1919,17 @@ func (m model) viewDetailCard(width, height int) string {
 	}
 	ev := m.selectedEvent()
 	if ev == nil {
-		return detailStyle.Width(max(28, width-2)).Height(max(3, height-2)).Render("No event selected")
+		return detailStyle.Width(max(28, width)).Height(max(3, height)).Render("No event selected")
 	}
 	var lines []string
 	lines = append(lines, sectionTitleStyle.Render(truncate("  "+ev.Title+"  ", max(10, width-4))))
 	lines = append(lines, "")
 	lines = append(lines, pillStyle.Render(ev.StartDate.Format("Mon Jan 02"))+" "+pillStyle.Render(m.timeLabel(ev)))
 	if loc := locationWithoutRooms(ev); loc != "" {
-		lines = append(lines, "📍 "+wrap(loc, max(10, width-4)))
+		lines = append(lines, linkStyle.Render("@ ")+wrap(loc, max(10, width-4)))
 	}
 	if len(ev.Rooms) > 0 {
-		lines = append(lines, "🏛  "+wrap(strings.Join(ev.Rooms, ", "), max(10, width-4)))
+		lines = append(lines, mutedStyle.Render("room: ")+wrap(strings.Join(ev.Rooms, ", "), max(10, width-7)))
 	}
 	if ev.Calendar != "" {
 		lines = append(lines, mutedStyle.Render("Calendar: "+displayNameForCalendar(ev.Calendar)))
@@ -1936,7 +1946,7 @@ func (m model) viewDetailCard(width, height int) string {
 				lines = append(lines, mutedStyle.Render(fmt.Sprintf("… +%d more", len(attendees)-12)))
 				break
 			}
-			lines = append(lines, "· "+truncate(prettyAttendee(a), max(10, width-5)))
+			lines = append(lines, "- "+truncate(prettyAttendee(a), max(10, width-5)))
 		}
 	}
 	if ev.Description != "" {
@@ -1956,11 +1966,11 @@ func (m model) viewDetailCard(width, height int) string {
 		}
 	}
 	content := strings.Join(lines, "\n")
-	// The rounded border adds 1 row top + 1 row bottom, so the rendered block is
-	// (inner height + 2). Cap inner height at height-2 so the whole card — including
-	// its bottom border — fits within `height` rows and never gets clipped.
-	inner := max(3, height-2)
-	return detailStyle.Width(max(28, width-2)).Height(inner).Render(truncateLines(content, inner, max(20, width-4)))
+	// No border: the card occupies exactly `height` rows. Left+right padding is
+	// 3 cells, so the content width is width-3. Pre-truncate to that width so
+	// lipgloss never re-wraps (which would grow the block past `height`).
+	inner := max(3, height)
+	return detailStyle.Width(max(28, width)).Height(inner).Render(truncateLines(content, inner, max(20, width-3)))
 }
 
 func (m model) searchMatches() []searchMatch {
@@ -2049,10 +2059,10 @@ func fuzzyScore(query, text string) int {
 	return 0
 }
 
-// attendeeEmail strips response-status prefixes (✓/✗/?) from an attendee label
-// to recover the raw email for calendar switching.
+// attendeeEmail strips response-status prefixes ([y]/[n]/[?]) from an attendee
+// label to recover the raw email for calendar switching.
 func attendeeEmail(label string) string {
-	for _, p := range []string{"✓ ", "✗ ", "? "} {
+	for _, p := range []string{"[y] ", "[n] ", "[?] "} {
 		label = strings.TrimPrefix(label, p)
 	}
 	label = strings.TrimSpace(label)
@@ -2152,7 +2162,7 @@ func (m model) viewCreate() string {
 		for i := start; i < min(len(cands), start+rows); i++ {
 			mark := "  "
 			if c.selected[cands[i].value] {
-				mark = "✓ "
+				mark = "* "
 			}
 			line := mark + truncate(cands[i].label, max(4, inner-4))
 			if i == c.attCandidx && c.editingField {
@@ -2188,11 +2198,11 @@ func (m model) viewCreate() string {
 		}
 	}
 	if c.err != "" {
-		lines = append(lines, errorStyle.Render("✗ "+c.err))
+		lines = append(lines, errorStyle.Render("x "+c.err))
 	}
 
 	h := min(len(lines)+2, max(8, m.height-4))
-	return detailStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
+	return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 }
 
 func (m model) viewConfirmDelete() string {
@@ -2211,7 +2221,7 @@ func (m model) viewConfirmDelete() string {
 	lines = append(lines, "")
 	lines = append(lines, mutedStyle.Render("y/Enter delete · n/ESC cancel"))
 	h := min(len(lines)+2, max(6, m.height-4))
-	return detailStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
+	return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 }
 
 func sortedKeys(mp map[string]bool) []string {
@@ -2304,9 +2314,9 @@ func shortCalendarID(cal string) string {
 }
 
 // prettyAttendee renders an attendee entry (which may carry a leading response
-// marker like "✓ ") with group/resource calendar ids resolved to readable names.
+// marker like "[y] ") with group/resource calendar ids resolved to readable names.
 func prettyAttendee(a string) string {
-	for _, mark := range []string{"✓ ", "✗ ", "? "} {
+	for _, mark := range []string{"[y] ", "[n] ", "[?] "} {
 		if strings.HasPrefix(a, mark) {
 			return mark + displayNameForCalendar(strings.TrimPrefix(a, mark))
 		}
@@ -2365,7 +2375,7 @@ func (m model) viewPopup() string {
 		}
 		lines = append(lines, "")
 		lines = append(lines, mutedStyle.Render("ESC / ? close"))
-		return detailStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
+		return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 	}
 
 	if m.mode == modeSearch {
@@ -2393,7 +2403,7 @@ func (m model) viewPopup() string {
 			}
 		}
 		lines = append(lines, mutedStyle.Render("↑/↓ move · Enter jump · ESC cancel"))
-		return detailStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
+		return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 	}
 
 	// Fuzzy pickers (links / calendars / attendees).
@@ -2426,7 +2436,7 @@ func (m model) viewPopup() string {
 		}
 	}
 	lines = append(lines, mutedStyle.Render("type filter · ↑/↓ move · Enter select · ESC cancel"))
-	return detailStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
+	return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 }
 
 func (m model) selectedEvent() *Event {

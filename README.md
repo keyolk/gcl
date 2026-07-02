@@ -52,7 +52,8 @@ OAuth credentials from `gcalcli` — and builds a richer interactive interface o
 - Location display
 - Link list display
 - Attendee list display
-- Attendee response markers (`✓`, `?`, `✗`)
+- Attendee response markers (`[y]` accepted, `[?]` tentative, `[n]` declined)
+- Meeting-room / resource display (shown separately from the free-text location)
 
 ### Search and filtering
 
