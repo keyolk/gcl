@@ -760,7 +760,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.focusPane = focusMain
 			}
 		}
-	case "r":
+	case "R":
 		return m, m.reload()
 	case "Z":
 		if n := len(settings.timezones); n > 0 {
@@ -2918,7 +2918,7 @@ func helpLines() []string {
 		"List    h/l move by step | d/w/m set step (day/week/month) | j/k select",
 		"Grid    h/l +/-day | j/k +/-week | focus cursor only; calendar stays put",
 		"        detail pane splits right (wide) or bottom (tall); A/L/E/X act on focus day",
-		"Common  n jump to now (today, else nearest upcoming) | r refresh | Z timezone (" + tzHint + ")",
+		"Common  n jump to now (today, else nearest upcoming) | R refresh | Z timezone (" + tzHint + ")",
 		"Open    Enter opens the Google Calendar event page",
 		"L       other links picker (zoom, docs, ~) (fuzzy)",
 		"A       attendees picker -> open that person's calendar",
