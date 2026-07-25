@@ -204,20 +204,33 @@ type model struct {
 	gridDetail  int       // grid detail selection within the focused day
 	nextReqID   int       // monotonically increasing fetch request id
 	inflightReq int       // last fetch request id actually issued
+	// lastUndo holds a single level of undo for the most recent
+	// create/patch/delete, so a mistyped submit or accidental delete can be
+	// reversed with `u` without leaving the TUI.
+	lastUndo *undoEntry
+	// preEdit snapshots the event's fields when an edit form opens, so a
+	// successful patch can be reversed back to those values.
+	preEdit *undoEntry
 }
 
 // createState holds the step-by-step new-event form.
 type createState struct {
 	step         createStep
 	title        string
-	date         string // YYYY-MM-DD
-	start        string // HH:MM
-	durationStr  string // raw duration input ("30", "1h")
+	date         string // YYYY-MM-DD (accepts flexible input, normalized on submit)
+	start        string // HH:MM (accepts flexible input, normalized on submit)
+	durationStr  string // raw duration input ("30", "1h", "1h30m")
 	duration     int    // parsed minutes
+	location     string // event location (free text)
+	description  string // event description / notes
+	repeat       string // repeat shorthand: "", daily, weekly, biweekly, monthly, weekdays (optionally "weekly x4")
 	attendees    []string
 	attInput     string       // fuzzy filter text in attendee step
 	attCandidx   int          // highlighted candidate index
 	attCands     []pickerItem // attendee candidate pool (fuzzy-filtered against attInput)
+	locCands     []pickerItem // location suggestions drawn from recently-seen events
+	locCandidx   int          // highlighted location suggestion
+	locSuggest   bool         // true while the location suggestion list is open
 	selected     map[string]bool
 	err          string
 	submitting   bool
@@ -233,9 +246,16 @@ const (
 	stepDate
 	stepStart
 	stepDuration
+	stepLocation
+	stepRepeat
+	stepDescription
 	stepAttendees
 	stepConfirm
 )
+
+// textSteps are the free-text fields, in form order. stepAttendees has its own
+// candidate-picker handling and is deliberately excluded.
+var textSteps = []createStep{stepTitle, stepDate, stepStart, stepDuration, stepLocation, stepRepeat, stepDescription}
 
 type inputMode int
 
@@ -527,11 +547,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode = modeNormal
+		verb := "created"
+		if msg.edited {
+			verb = "updated"
+		}
 		n := len(m.create.attendees)
 		if n > 0 {
-			m.status = fmt.Sprintf("created \"%s\" | invited %d", m.create.title, n)
+			m.status = fmt.Sprintf("%s \"%s\" | invited %d · u to undo", verb, m.create.title, n)
 		} else {
-			m.status = fmt.Sprintf("created \"%s\"", m.create.title)
+			m.status = fmt.Sprintf("%s \"%s\" · u to undo", verb, m.create.title)
+		}
+		// Record undo. A create is reversed by deleting; a patch is reversed by
+		// restoring the pre-edit field values captured when the form opened.
+		if msg.edited {
+			if m.preEdit != nil {
+				snap := *m.preEdit
+				snap.kind = undoPatch
+				snap.label = m.create.title
+				m.lastUndo = &snap
+			}
+		} else if msg.eventID != "" {
+			m.lastUndo = &undoEntry{
+				kind:     undoCreate,
+				calendar: msg.calendar,
+				eventID:  msg.eventID,
+				label:    m.create.title,
+			}
 		}
 		m.loading = true
 		return m, m.reload()
@@ -542,7 +583,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "delete failed"
 			return m, nil
 		}
-		m.status = "event deleted"
+		if msg.restore != nil {
+			m.lastUndo = msg.restore
+			m.status = fmt.Sprintf("deleted \"%s\" · u to undo", msg.restore.label)
+		} else {
+			m.status = "event deleted"
+		}
+		return m, m.reload()
+	case undoneMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			m.status = "undo failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.lastUndo = nil
+		m.status = "undid: " + msg.label
+		m.loading = true
+		return m, m.reload()
+	case eventShiftedMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			m.status = "shift failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.lastUndo = msg.restore
+		m.status = msg.label + " · u to undo"
+		m.loading = true
 		return m, m.reload()
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -568,10 +634,15 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cal := m.calendar
 			id := ev.ID
 			notify := len(ev.Attendees) > 0
+			// Snapshot before deleting so `u` can recreate the event.
+			restore := undoSnapshot(ev, cal, undoDelete)
 			m.status = "deleting~"
 			return m, func() tea.Msg {
 				err := deleteEvent(cal, id, notify)
-				return deletedMsg{err: err}
+				if err != nil {
+					return deletedMsg{err: err}
+				}
+				return deletedMsg{restore: restore}
 			}
 		default: // n / N / esc / anything else cancels
 			m.mode = modeNormal
@@ -677,6 +748,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = modeNormal
 		}
 		return m, nil
+	}
+
+	// Quick actions (nudge/resize/duplicate/undo) act on the selected event
+	// without opening the form. Checked before the main dispatch so they can
+	// own their keys, and falling through when the key isn't one of theirs.
+	if mm, cmd, handled := m.handleQuickAction(key); handled {
+		return mm, cmd
 	}
 
 	switch key {
@@ -813,6 +891,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.mode = modeCreate
 				m.create = m.editCreateState(ev)
+				// Snapshot the pre-edit values so a successful patch can be
+				// reversed with `u`.
+				m.preEdit = undoSnapshot(ev, m.calendar, undoPatch)
 			}
 		}
 	case "?":
@@ -969,8 +1050,11 @@ func (m model) editCreateState(ev *Event) createState {
 		start:        ev.StartAt.In(loc).Format("15:04"),
 		durationStr:  fmt.Sprintf("%d", dur),
 		duration:     dur,
+		location:     ev.Location,
+		description:  ev.Description,
 		selected:     sel,
 		attCands:     m.attendeeCandidatePool(),
+		locCands:     m.locationCandidatePool(),
 		editingField: true,
 		editing:      true,
 		eventID:      ev.ID,
@@ -978,12 +1062,59 @@ func (m model) editCreateState(ev *Event) createState {
 }
 
 type createdMsg struct {
-	link string
-	err  error
+	link     string
+	err      error
+	edited   bool   // true when this was a patch of an existing event
+	eventID  string // id of the created/updated event (for undo)
+	calendar string // calendar the event landed on (for undo)
 }
 
 type deletedMsg struct {
 	err error
+	// Snapshot of the deleted event so `u` can recreate it.
+	restore *undoEntry
+}
+
+// undoKind distinguishes what the last mutating action was, so `u` knows how to
+// reverse it.
+type undoKind int
+
+const (
+	undoNone   undoKind = iota
+	undoCreate          // reverse by deleting the created event
+	undoDelete          // reverse by re-creating the deleted event
+	undoPatch           // reverse by patching the event back to its previous field values
+)
+
+// undoEntry captures enough state to reverse the last create/patch/delete.
+// Only one level of undo is kept — it exists to recover from a mistyped submit
+// or an accidental delete, not as a full history.
+type undoEntry struct {
+	kind     undoKind
+	calendar string
+	eventID  string
+	label    string // human-readable summary for the status line
+	// Snapshot of the event's fields, used by undoDelete (recreate) and
+	// undoPatch (restore previous values).
+	title       string
+	start       time.Time
+	end         time.Time
+	location    string
+	description string
+	attendees   []string
+}
+
+type undoneMsg struct {
+	err   error
+	label string
+}
+
+// eventShiftedMsg reports the result of a quick action (nudge/resize/duplicate)
+// performed directly on the selected event, without opening the form.
+type eventShiftedMsg struct {
+	err     error
+	label   string
+	restore *undoEntry
 }
 
 func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1019,7 +1150,7 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch c.step {
-	case stepTitle, stepDate, stepStart, stepDuration:
+	case stepTitle, stepDate, stepStart, stepDuration, stepLocation, stepRepeat, stepDescription:
 		field := c.fieldPtr()
 		if !c.editingField {
 			switch key {
@@ -1035,6 +1166,31 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		// Location field: ctrl+n/ctrl+p cycle suggestions, ctrl+y accepts the
+		// highlighted one. Handled before the generic text keys so they don't
+		// get typed into the field.
+		if c.step == stepLocation {
+			cands := filterPickerItems(c.locCands, c.location)
+			switch key {
+			case "ctrl+n":
+				if len(cands) > 0 {
+					c.locCandidx = (c.locCandidx + 1) % len(cands)
+				}
+				return m, nil
+			case "ctrl+p":
+				if len(cands) > 0 {
+					c.locCandidx = (c.locCandidx - 1 + len(cands)) % len(cands)
+				}
+				return m, nil
+			case "ctrl+y":
+				if len(cands) > 0 {
+					c.location = cands[max(0, min(c.locCandidx, len(cands)-1))].value
+					c.locCandidx = 0
+				}
+				return m, nil
+			}
+		}
+
 		switch key {
 		// While editing a text field, j/k must TYPE - only Tab/S-Tab (and arrows,
 		// which are inert in a single-line field) move between fields.
@@ -1057,12 +1213,18 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(*field) > 0 {
 				_, size := utf8.DecodeLastRuneInString(*field)
 				*field = (*field)[:len(*field)-size]
+				if c.step == stepLocation {
+					c.locCandidx = 0
+				}
 			}
 		default:
 			if key == "space" {
 				*field += " "
 			} else if len(key) == 1 {
 				*field += msg.String()
+				if c.step == stepLocation {
+					c.locCandidx = 0
+				}
 			}
 		}
 		return m, nil
@@ -1132,6 +1294,12 @@ func (c *createState) fieldPtr() *string {
 		return &c.start
 	case stepDuration:
 		return &c.durationStr
+	case stepLocation:
+		return &c.location
+	case stepRepeat:
+		return &c.repeat
+	case stepDescription:
+		return &c.description
 	}
 	return &c.title
 }
@@ -1143,36 +1311,29 @@ func (c *createState) validateStep() string {
 			return "title is required"
 		}
 	case stepDate:
-		if _, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(c.date), time.Local); err != nil {
-			return "date must be YYYY-MM-DD"
+		if _, err := parseFlexibleDate(c.date, time.Now()); err != nil {
+			return "date: try 2026-07-20, tmr, mon, or +3d"
 		}
 	case stepStart:
-		if _, err := time.Parse("15:04", strings.TrimSpace(c.start)); err != nil {
-			return "start must be HH:MM (24h)"
+		if _, err := parseFlexibleTime(c.start); err != nil {
+			return "start: try 15:00, 3pm, 1530, or 15시"
 		}
 	case stepDuration:
 		if _, err := parseDurationMinutes(c.durationStr); err != nil {
-			return "duration must be minutes, e.g. 30 or 1h"
+			return "duration: try 30, 1h, 1h30m, or 90m"
 		}
 	}
 	return ""
 }
 
-// validateAll checks the whole form for the single-screen create/edit flow.
+// validateAll checks the whole form for the single-screen create/edit flow and
+// rewrites the flexible date/time/duration input into canonical text, so what
+// the form shows after submit-validation is exactly what gets created.
 func (c *createState) validateAll() string {
-	for _, step := range []createStep{stepTitle, stepDate, stepStart, stepDuration} {
-		prev := c.step
-		c.step = step
-		if err := c.validateStep(); err != "" {
-			c.step = prev
-			return err
-		}
-		c.step = prev
+	if strings.TrimSpace(c.title) == "" {
+		return "title is required"
 	}
-	if d, err := parseDurationMinutes(c.durationStr); err == nil {
-		c.duration = d
-	}
-	return ""
+	return c.normalize(time.Now())
 }
 
 func (c *createState) advance(m model) {
@@ -1187,6 +1348,12 @@ func (c *createState) advance(m model) {
 		if d, err := parseDurationMinutes(c.durationStr); err == nil {
 			c.duration = d
 		}
+		c.step = stepLocation
+	case stepLocation:
+		c.step = stepRepeat
+	case stepRepeat:
+		c.step = stepDescription
+	case stepDescription:
 		c.step = stepAttendees
 	}
 }
@@ -1217,24 +1384,8 @@ func filterPickerItems(items []pickerItem, query string) []pickerItem {
 	return ps.filtered(query)
 }
 
-func parseDurationMinutes(s string) (int, error) {
-	s = strings.TrimSpace(strings.ToLower(s))
-	if s == "" {
-		return 0, fmt.Errorf("empty")
-	}
-	if strings.HasSuffix(s, "h") {
-		var h float64
-		if _, err := fmt.Sscanf(s, "%fh", &h); err == nil && h > 0 {
-			return int(h * 60), nil
-		}
-	}
-	s = strings.TrimSuffix(s, "m")
-	var n int
-	if _, err := fmt.Sscanf(s, "%d", &n); err == nil && n > 0 {
-		return n, nil
-	}
-	return 0, fmt.Errorf("invalid duration")
-}
+// parseDurationMinutes now lives in datetime.go alongside the flexible
+// date/time parsers, so all form-input parsing sits in one place.
 
 func (m model) submitCreateCmd() tea.Cmd {
 	c := m.create
@@ -1253,25 +1404,30 @@ func (m model) submitCreateCmd() tea.Cmd {
 		end := start.Add(time.Duration(c.duration) * time.Minute)
 		if c.editing {
 			link, err := patchEvent(patchEventInput{
-				Calendar:  cal,
-				EventID:   c.eventID,
-				Title:     strings.TrimSpace(c.title),
-				Start:     start,
-				End:       end,
-				Attendees: c.attendees,
-				Notify:    len(c.attendees) > 0,
+				Calendar:    cal,
+				EventID:     c.eventID,
+				Title:       strings.TrimSpace(c.title),
+				Start:       start,
+				End:         end,
+				Location:    c.location,
+				Description: c.description,
+				Attendees:   c.attendees,
+				Notify:      len(c.attendees) > 0,
 			})
-			return createdMsg{link: link, err: err}
+			return createdMsg{link: link, err: err, edited: true, eventID: c.eventID, calendar: cal}
 		}
-		link, err := createEvent(createEventInput{
-			Calendar:  cal,
-			Title:     strings.TrimSpace(c.title),
-			Start:     start,
-			End:       end,
-			Attendees: c.attendees,
-			Notify:    len(c.attendees) > 0,
+		created, err := createEvent(createEventInput{
+			Calendar:    cal,
+			Title:       strings.TrimSpace(c.title),
+			Start:       start,
+			End:         end,
+			Location:    c.location,
+			Description: c.description,
+			Recurrence:  c.recurrenceRules(),
+			Attendees:   c.attendees,
+			Notify:      len(c.attendees) > 0,
 		})
-		return createdMsg{link: link, err: err}
+		return createdMsg{link: created.Link, err: err, eventID: created.ID, calendar: cal}
 	}
 }
 
@@ -1298,8 +1454,32 @@ func (m model) newCreateState() createState {
 		duration:     dur,
 		selected:     map[string]bool{},
 		attCands:     m.attendeeCandidatePool(),
+		locCands:     m.locationCandidatePool(),
 		editingField: true,
 	}
+}
+
+// locationCandidatePool gathers location suggestions from the events currently
+// loaded: real meeting rooms and physical locations you already use show up
+// first, so recurring places don't have to be retyped.
+func (m model) locationCandidatePool() []pickerItem {
+	seen := map[string]bool{}
+	var out []pickerItem
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[strings.ToLower(s)] {
+			return
+		}
+		seen[strings.ToLower(s)] = true
+		out = append(out, pickerItem{label: s, value: s})
+	}
+	for i := range m.events {
+		add(m.events[i].Location)
+		for _, r := range m.events[i].Rooms {
+			add(r)
+		}
+	}
+	return out
 }
 
 // attendeeCandidatePool gathers likely invitees: recent calendars (emails) and
@@ -1566,9 +1746,9 @@ func (m model) shortcutHint() string {
 		if m.view != viewList {
 			return " h/l +/-day | j/k +/-week | g->list | M month-grid | n now | A attendees | L links | E edit | X del | N new | e cal | Z tz | / | ? | q "
 		}
-		return " h/l move(step) | d/w/m step | j/k select | n now | g grid | Z tz | N new | E edit | X del | ↵ open | L links | A attendees | e cal | / search | ? | q "
+		return " h/l move(step) | d/w/m step | j/k select | n now | g grid | Z tz | N new | E edit | X del | )( ±15m | }{ resize | >< ±day | D dup | u undo | ↵ open | / search | ? | q "
 	case modeCreate:
-		return " new/edit event  |  type to edit  |  Enter next/save  |  ESC back  |  Space toggle attendee "
+		return " new/edit event  |  type to edit  |  Enter save  |  Tab/S-Tab field  |  ESC back  |  Space toggle attendee "
 	case modeConfirmDelete:
 		return " delete event?  |  y/Enter confirm  |  N/ESC cancel "
 	}
@@ -2115,7 +2295,8 @@ func (m model) viewCreate() string {
 	c := m.create
 	w := min(max(52, m.width*3/5), max(40, m.width-4))
 	inner := max(16, w-4)
-	stepName := []string{"Title", "Date", "Start", "Duration", "Attendees", "Confirm"}[c.step]
+	stepNames := []string{"Title", "Date", "Start", "Duration", "Location", "Repeat", "Description", "Attendees", "Confirm"}
+	stepName := stepNames[min(int(c.step), len(stepNames)-1)]
 
 	var lines []string
 	formTitle := "New event"
@@ -2144,6 +2325,32 @@ func (m model) viewCreate() string {
 	lines = append(lines, field("Date", c.date, c.step == stepDate))
 	lines = append(lines, field("Start", c.start, c.step == stepStart))
 	lines = append(lines, field("Duration", c.durationStr+"m", c.step == stepDuration))
+	lines = append(lines, field("Location", c.location, c.step == stepLocation))
+	lines = append(lines, field("Repeat", c.repeat, c.step == stepRepeat))
+	lines = append(lines, field("Notes", c.description, c.step == stepDescription))
+
+	// Inline hint for the focused field: shows what shorthand is accepted, so
+	// the flexible parsers are discoverable instead of hidden.
+	if hint := fieldHint(c.step); hint != "" {
+		lines = append(lines, mutedStyle.Render("  "+hint))
+	}
+
+	// Location suggestions from events already loaded — recurring rooms and
+	// places don't have to be retyped.
+	if c.step == stepLocation && c.editingField {
+		cands := filterPickerItems(c.locCands, c.location)
+		for i := 0; i < min(len(cands), 4); i++ {
+			line := "  " + truncate(cands[i].label, max(4, inner-4))
+			if i == c.locCandidx {
+				lines = append(lines, selectedStyle.Width(inner-2).Render(line))
+			} else {
+				lines = append(lines, mutedStyle.Render(line))
+			}
+		}
+		if len(cands) > 0 {
+			lines = append(lines, mutedStyle.Render("  ctrl+n/ctrl+p pick · ctrl+y accept"))
+		}
+	}
 
 	// Attendees block - rendered through the same field() helper so its label
 	// lines up with Title/Date/Start/Duration. field() appends the edit cursor.
@@ -2183,9 +2390,17 @@ func (m model) viewCreate() string {
 	}
 
 	lines = append(lines, "")
-	day, _ := time.ParseInLocation("2006-01-02", c.date, m.tz())
 	lines = append(lines, pillStyle.Render(strings.TrimSpace(c.title)))
-	lines = append(lines, mutedStyle.Render(fmt.Sprintf("%s  %s (%dm)  %s", day.Format("Mon Jan 02"), c.start, c.duration, m.tzLabel())))
+	// Live preview resolved through the flexible parsers, so typing "tmr" /
+	// "3pm" / "1h30m" immediately shows the concrete day, time, and end time it
+	// will create.
+	lines = append(lines, mutedStyle.Render(c.previewLine(m.tz(), m.tzLabel(), time.Now())))
+	if loc := strings.TrimSpace(c.location); loc != "" {
+		lines = append(lines, mutedStyle.Render("@ "+truncate(loc, max(4, inner-2))))
+	}
+	if rules := c.recurrenceRules(); len(rules) > 0 {
+		lines = append(lines, mutedStyle.Render("repeats "+describeRepeat(c.repeat)))
+	}
 	if len(atts) > 0 {
 		lines = append(lines, errorStyle.Render(fmt.Sprintf("⚠ invitation emails will be sent to %d people", len(atts))))
 	}
@@ -2924,6 +3139,12 @@ func helpLines() []string {
 		"A       attendees picker -> open that person's calendar",
 		"e       calendar picker (recent *, subscribed, aliases; fuzzy)",
 		"N       new event | E edit selected | X delete (confirm)",
+		"Quick   ) / ( move start +/-15m | } / { lengthen/shorten 15m",
+		"        > / < move to next/prev day | D duplicate | W copy to next week",
+		"u       undo last create/edit/delete/quick action",
+		"Form    date: today/tmr/mon/+3d/7-20 | time: 3pm/1530/15시 | dur: 1h30m/90m",
+		"        repeat: daily/weekly/biweekly/monthly/weekdays (+ x4 for 4 times)",
+		"        location: ctrl+n/ctrl+p cycle suggestions, ctrl+y accept",
 		"/       fuzzy search across loaded events, Enter jumps",
 		"q       quit  |  ESC backs out of any overlay",
 		"",
