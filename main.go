@@ -266,6 +266,7 @@ const (
 	modeAttendeePicker
 	modeHelp
 	modeFormHelp
+	modeConfirmSubmit
 	modeSearch
 	modeCreate
 	modeConfirmDelete
@@ -624,6 +625,26 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCreateKey(msg)
 	}
 
+	if m.mode == modeConfirmSubmit {
+		switch key {
+		case "y", "Y", "enter":
+			c := &m.create
+			// Finalize the attendee set now (was deferred from the form
+			// Enter) so the confirmation summary shows the real count.
+			c.finalizeAttendees()
+			c.submitting = true
+			c.err = ""
+			m.status = "creating~"
+			return m, m.submitCreateCmd()
+		case "n", "N", "esc":
+			// Return to the form, not to normal mode, so an in-progress
+			// edit isn't lost. The form's field text and cursor are preserved.
+			m.mode = modeCreate
+			return m, nil
+		}
+		return m, nil
+	}
+
 	if m.mode == modeConfirmDelete {
 		switch key {
 		case "y", "Y", "enter":
@@ -755,6 +776,23 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeFormHelp {
 		if key == "esc" || key == "enter" || key == "?" {
 			m.mode = modeCreate
+		}
+		return m, nil
+	}
+	// Confirm-submit overlay: y/Enter actually creates/updates; n/ESC
+	// returns to the form (not to normal mode, so an in-progress edit isn't lost).
+	if m.mode == modeConfirmSubmit {
+		switch key {
+		case "y", "Y", "enter":
+			c := &m.create
+			c.finalizeAttendees()
+			c.submitting = true
+			c.err = ""
+			m.status = "creating~"
+			return m, m.submitCreateCmd()
+		case "n", "N", "esc":
+			m.mode = modeCreate
+			return m, nil
 		}
 		return m, nil
 	}
@@ -1221,10 +1259,11 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if err := c.validateAll(); err != "" {
 				c.err = err
 			} else {
-				c.finalizeAttendees()
-				c.submitting = true
-				c.err = ""
-				return m, m.submitCreateCmd()
+				// Route through a confirmation prompt so a mistyped
+				// submit isn't created outright — mirroring the delete
+				// confirmation (modeConfirmDelete). y/Enter here
+				// actually submits; n/ESC returns to the form.
+				m.mode = modeConfirmSubmit
 			}
 		case "backspace", "ctrl+h":
 			if len(*field) > 0 {
@@ -1278,10 +1317,7 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if err := c.validateAll(); err != "" {
 				c.err = err
 			} else {
-				c.finalizeAttendees()
-				c.submitting = true
-				c.err = ""
-				return m, m.submitCreateCmd()
+				m.mode = modeConfirmSubmit
 			}
 		case "backspace", "ctrl+h":
 			if len(c.attInput) > 0 {
@@ -2641,6 +2677,30 @@ func (m model) viewPopup() string {
 		}
 		lines = append(lines, "")
 		lines = append(lines, mutedStyle.Render("ESC / ? close  |  any field: Enter saves"))
+		return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
+	}
+
+	if m.mode == modeConfirmSubmit {
+		ev := m.currentActionEvent()
+		title := "Create event"
+		if m.create.editing {
+			title = "Edit event"
+		}
+		w, h := m.popupSize(8)
+		var lines []string
+		lines = append(lines, sectionTitleStyle.Render(fmt.Sprintf(" %s? ", title)))
+		lines = append(lines, "")
+		if ev != nil || !m.create.editing {
+			lines = append(lines, pillStyle.Render("(no event selected)"))
+		} else {
+			lines = append(lines, pillStyle.Render(strings.TrimSpace(m.create.title)))
+			lines = append(lines, mutedStyle.Render(m.create.previewLine(m.tz(), m.tzLabel(), time.Now())))
+			if n := len(m.create.attendees); n > 0 {
+				lines = append(lines, errorStyle.Render(fmt.Sprintf("⚠ invitation emails will be sent to %d people", n)))
+			}
+		}
+		lines = append(lines, "")
+		lines = append(lines, mutedStyle.Render("y/Enter %s  |  n/ESC back to form", strings.ToLower(title)))
 		return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 	}
 
