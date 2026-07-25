@@ -265,6 +265,7 @@ const (
 	modeLinkPicker
 	modeAttendeePicker
 	modeHelp
+	modeFormHelp
 	modeSearch
 	modeCreate
 	modeConfirmDelete
@@ -749,6 +750,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	// Form help overlay: close back to the form (not to normal mode, so
+	// an in-progress edit isn't lost). ? toggles back to the form too.
+	if m.mode == modeFormHelp {
+		if key == "esc" || key == "enter" || key == "?" {
+			m.mode = modeCreate
+		}
+		return m, nil
+	}
 
 	// Quick actions (nudge/resize/duplicate/undo) act on the selected event
 	// without opening the form. Checked before the main dispatch so they can
@@ -1123,6 +1132,14 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if key == "ctrl+c" {
 		m.mode = modeNormal
+		return m, nil
+	}
+
+	// `?` inside the form opens the form-specific help overlay (not the global
+	// one), so the user can discover field navigation, flexible input, and
+	// quick actions while composing.
+	if key == "?" {
+		m.mode = modeFormHelp
 		return m, nil
 	}
 
@@ -1742,6 +1759,8 @@ func (m model) shortcutHint() string {
 		return " A attendees  |  Enter -> open their calendar  |  up/dn move  |  ESC cancel "
 	case modeHelp:
 		return " help  |  ESC / ? close "
+	case modeFormHelp:
+		return " form help  |  ESC / ? close "
 	default:
 		if m.view != viewList {
 			return " h/l +/-day | j/k +/-week | g->list | M month-grid | n now | A attendees | L links | E edit | X del | N new | e cal | Z tz | / | ? | q "
@@ -2305,11 +2324,28 @@ func (m model) viewCreate() string {
 	}
 	lines = append(lines, sectionTitleStyle.Render(fmt.Sprintf(" %s | %s ", formTitle, stepName)))
 	lines = append(lines, mutedStyle.Render("on "+m.calendarDisplayName()))
+	// Onboarding hint: show the shorthand summary once, right after the form
+	// opens, so the user sees what they can type before touching a field. It
+	// disappears as soon as the title is filled (the per-field inline hints
+	// take over from there).
+	if !c.editing && strings.TrimSpace(c.title) == "" {
+		lines = append(lines, mutedStyle.Render("  date: today · tmr · +3d · 7/20   start: 3pm · 1530 · 15시   dur: 1h30m · 90m"))
+		lines = append(lines, mutedStyle.Render("  repeat: weekly x4   location: Room A   notes: agenda body"))
+		lines = append(lines, "")
+	}
 	lines = append(lines, "")
 
-	field := func(label, val string, active bool) string {
+	// field renders one form row. When the value is empty and the field is not
+	// focused, `placeholder` is shown muted (an example of what to type) so an
+	// empty form isn't a row of dashes with no clue what goes there. When the field
+	// is focused, the edit cursor shows instead.
+	field := func(label, val, placeholder string, active bool) string {
 		if val == "" {
-			val = "-"
+			if active {
+				val = "|"
+			} else {
+				return mutedStyle.Render(fmt.Sprintf("%-10s %s", label, placeholder))
+			}
 		}
 		line := fmt.Sprintf("%-10s %s", label, truncate(val, max(4, inner-lipgloss.Width(label)-3)))
 		if active {
@@ -2321,13 +2357,13 @@ func (m model) viewCreate() string {
 		return line
 	}
 
-	lines = append(lines, field("Title", c.title, c.step == stepTitle))
-	lines = append(lines, field("Date", c.date, c.step == stepDate))
-	lines = append(lines, field("Start", c.start, c.step == stepStart))
-	lines = append(lines, field("Duration", c.durationStr+"m", c.step == stepDuration))
-	lines = append(lines, field("Location", c.location, c.step == stepLocation))
-	lines = append(lines, field("Repeat", c.repeat, c.step == stepRepeat))
-	lines = append(lines, field("Notes", c.description, c.step == stepDescription))
+	lines = append(lines, field("Title", c.title, "e.g. 1:1 with Gavin", c.step == stepTitle))
+	lines = append(lines, field("Date", c.date, "today · tmr · +3d · 7/20", c.step == stepDate))
+	lines = append(lines, field("Start", c.start, "3pm · 1530 · 15시", c.step == stepStart))
+	lines = append(lines, field("Duration", c.durationStr+"m", "30 · 1h30m · 90m", c.step == stepDuration))
+	lines = append(lines, field("Location", c.location, "Room A / Zoom link", c.step == stepLocation))
+	lines = append(lines, field("Repeat", c.repeat, "daily · weekly x4 · 매주", c.step == stepRepeat))
+	lines = append(lines, field("Notes", c.description, "agenda body / meeting notes", c.step == stepDescription))
 
 	// Inline hint for the focused field: shows what shorthand is accepted, so
 	// the flexible parsers are discoverable instead of hidden.
@@ -2359,7 +2395,7 @@ func (m model) viewCreate() string {
 	if c.step == stepAttendees && c.editingField {
 		attVal = fmt.Sprintf("(%d) | filter: %s", len(atts), c.attInput)
 	}
-	lines = append(lines, field("Attendees", attVal, c.step == stepAttendees))
+	lines = append(lines, field("Attendees", attVal, "a@example.com …", c.step == stepAttendees))
 	if c.step == stepAttendees {
 		cands := filterPickerItems(c.attCands, c.attInput)
 		rows := max(1, min(6, len(cands)))
@@ -2591,6 +2627,20 @@ func (m model) viewPopup() string {
 		}
 		lines = append(lines, "")
 		lines = append(lines, mutedStyle.Render("ESC / ? close"))
+		return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
+	}
+
+	if m.mode == modeFormHelp {
+		w, h := m.popupSize(len(formHelpLines()) + 1)
+		inner := max(10, w-4)
+		var lines []string
+		lines = append(lines, sectionTitleStyle.Render(" Form Help "))
+		lines = append(lines, "")
+		for _, l := range formHelpLines() {
+			lines = append(lines, truncate(l, inner))
+		}
+		lines = append(lines, "")
+		lines = append(lines, mutedStyle.Render("ESC / ? close  |  any field: Enter saves"))
 		return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 	}
 
@@ -3149,6 +3199,32 @@ func helpLines() []string {
 		"q       quit  |  ESC backs out of any overlay",
 		"",
 		"Aliases defined in " + configPath() + " ([aliases] section)",
+	}
+}
+
+// formHelpLines is the form-mode help overlay, shown when `?` is pressed inside
+// the create/edit form. It collects the field-navigation, flexible-input,
+// repeat, and quick-action hints in one place so the user can discover them
+// while composing without backing out to the global help.
+func formHelpLines() []string {
+	return []string{
+		"Form    Enter save from any field | Tab/S-Tab next field",
+		"        j/k move field | Enter/i edit field | Space toggle attendee",
+		"        ESC blur field / close form",
+		"        ctrl+n/ctrl+p cycle location suggestions | ctrl+y accept",
+		"",
+		"Date    today · tmr · yst · +3d · -1d · 2w · +1m · mon…sun · next fri",
+		"        7/20 · 07-20 · 0720 · 20 · 2026-07-20 · 오늘 · 내일 · 어제",
+		"Start   15:00 · 3pm · 3:30pm · 11am · 12am · 12pm · 1530 · 930 · 15 · 15시 · 9시30분",
+		"Dur     30 · 45m · 90m · 1h · 1.5h · 1h30m · 1일 · 30분 · 1시간30분",
+		"Repeat  daily · weekly · biweekly · monthly · yearly · weekdays",
+		"        (+ x4 for 4 times) · 매일 · 매주 · 격주 · 매월 · 평일",
+		"        unrecognized text is rejected (no wrong recurrence created)",
+		"Notes   free text (agenda/body)",
+		"",
+		"Quick   ) / ( move start +/-15m | } / { lengthen/shorten 15m | > / < move +/-1 day",
+		"        D duplicate | W copy to next week | u undo",
+		"        quick actions never mail attendees (use E to notify)",
 	}
 }
 
