@@ -546,8 +546,9 @@ func rememberCalendar(value string) {
 type createEventInput struct {
 	Calendar    string    // calendar id/email/alias to create on
 	Title       string    // summary
-	Start       time.Time // absolute start (already in the intended tz)
-	End         time.Time // absolute end
+	Start       time.Time // absolute start (already in the intended tz); zero for all-day
+	End         time.Time // absolute end; zero for all-day
+	AllDay      bool      // true for all-day events (Start/End are zero, payload uses `date` not `dateTime`)
 	Location    string    // free-text location (omitted when empty)
 	Description string    // notes/agenda (omitted when empty)
 	Recurrence  []string  // RRULE lines, e.g. ["RRULE:FREQ=WEEKLY;COUNT=4"]
@@ -576,7 +577,8 @@ func createEvent(in createEventInput) (createdEvent, error) {
 	calID := resolveCalendarID(in.Calendar)
 
 	type apiDateTime struct {
-		DateTime string `json:"dateTime"`
+		DateTime string `json:"dateTime,omitempty"`
+		Date     string `json:"date,omitempty"`
 		TimeZone string `json:"timeZone,omitempty"`
 	}
 	type apiAttendeeReq struct {
@@ -592,11 +594,18 @@ func createEvent(in createEventInput) (createdEvent, error) {
 		Attendees   []apiAttendeeReq `json:"attendees,omitempty"`
 	}{
 		Summary:     in.Title,
-		Start:       apiDateTime{DateTime: in.Start.Format(time.RFC3339)},
-		End:         apiDateTime{DateTime: in.End.Format(time.RFC3339)},
 		Location:    strings.TrimSpace(in.Location),
 		Description: strings.TrimSpace(in.Description),
 		Recurrence:  in.Recurrence,
+	}
+	// All-day events carry a date (no dateTime) so Google Calendar renders
+	// them as day-long bars instead of timed slots.
+	if in.AllDay {
+		payload.Start = apiDateTime{Date: in.Start.Format("2006-01-02")}
+		payload.End = apiDateTime{Date: in.End.Format("2006-01-02")}
+	} else {
+		payload.Start = apiDateTime{DateTime: in.Start.Format(time.RFC3339)}
+		payload.End = apiDateTime{DateTime: in.End.Format(time.RFC3339)}
 	}
 	for _, a := range in.Attendees {
 		a = strings.TrimSpace(a)

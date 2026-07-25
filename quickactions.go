@@ -165,18 +165,25 @@ func (m model) duplicateEventCmd(ev *Event, offset time.Duration, label string) 
 	if ev == nil || ev.ID == "" {
 		return nil
 	}
-	if ev.AllDay() {
-		return func() tea.Msg {
-			return eventShiftedMsg{err: fmt.Errorf("all-day events cannot be duplicated yet")}
-		}
-	}
 	cal := m.calendar
 	title := ev.Title
 	if offset == 0 {
 		title = strings.TrimSpace(ev.Title) + " (copy)"
 	}
-	start := ev.StartAt.Add(offset)
-	end := ev.EndAt.Add(offset)
+	// All-day events carry their date in StartDate/EndDate (StartAt/EndAt are
+	// zero); shift the date fields and flag the copy as all-day so the
+	// API payload uses `date` instead of `dateTime`. Timed events shift
+	// the absolute StartAt/EndAt as before.
+	allDay := ev.AllDay()
+	start := ev.StartAt
+	end := ev.EndAt
+	if allDay {
+		start = ev.StartDate.Add(offset)
+		end = ev.EndDate.Add(offset)
+	} else {
+		start = start.Add(offset)
+		end = end.Add(offset)
+	}
 	loc := ev.Location
 	desc := ev.Description
 	var atts []string
@@ -191,6 +198,7 @@ func (m model) duplicateEventCmd(ev *Event, offset time.Duration, label string) 
 			Title:       title,
 			Start:       start,
 			End:         end,
+			AllDay:      allDay,
 			Location:    loc,
 			Description: desc,
 			Attendees:   atts,

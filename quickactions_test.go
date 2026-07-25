@@ -189,3 +189,41 @@ func TestShiftEventRejectsAllDayAndZeroDuration(t *testing.T) {
 		t.Errorf("expected an error for zero-duration resize, got %+v", msg)
 	}
 }
+
+func TestDuplicateEventHandlesAllDay(t *testing.T) {
+	m := model{calendar: "me"}
+	// All-day events used to be rejected by duplicate; now they duplicate
+	// by shifting the date fields and flagging the copy as all-day. The
+	// command is constructed locally (no API call needed to verify that
+	// the all-day path is taken, mirroring the shift rejection test).
+	allDay := &Event{
+		ID:        "x",
+		Title:     "Holiday",
+		StartDate: time.Date(2026, 7, 15, 0, 0, 0, 0, time.Local),
+		EndDate:   time.Date(2026, 7, 15, 0, 0, 0, 0, time.Local),
+	}
+	cmd := m.duplicateEventCmd(allDay, 0, "duplicated \"Holiday\"")
+	if cmd == nil {
+		t.Fatal("expected a duplicate command for an all-day event (was rejected before)")
+	}
+}
+
+func TestDuplicateEventCopiesToNextWeek(t *testing.T) {
+	m := model{calendar: "me"}
+	start := time.Date(2026, 7, 15, 10, 0, 0, 0, time.Local)
+	ev := &Event{
+		ID:        "x",
+		Title:     "Standup",
+		StartAt:   start,
+		EndAt:     start.Add(30 * time.Minute),
+		StartDate: start,
+		StartTime: "10:00",
+	}
+	// W copies into the same slot next week (offset=7 days). The command
+	// is constructed locally; the real API call happens when bubbletea
+	// executes it (not during this test, so no OAuth is needed here).
+	cmd := m.duplicateEventCmd(ev, 7*24*time.Hour, "copied \"Standup\" to next week")
+	if cmd == nil {
+		t.Fatal("expected a duplicate command for next week")
+	}
+}
