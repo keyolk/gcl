@@ -298,9 +298,29 @@ upcoming events in the given window.
 - `E` — edit selected/current event
 - `X` — delete selected/current event
 
+### Quick actions (no form)
+
+Reschedule without opening the form. All of these act on the selected event
+(list view) or the first event on the focused day (grid views), and each one is
+undoable with `u`.
+
+- `)` / `(` — move the event 15 minutes later / earlier (duration preserved)
+- `}` / `{` — lengthen / shorten by 15 minutes (start preserved)
+- `>` / `<` — move to the next / previous day (time of day preserved)
+- `D` — duplicate the event in place (title gets a `(copy)` suffix)
+- `W` — copy the event into the same slot next week
+- `u` — undo the last create / edit / delete / quick action
+
+Quick actions and undo never email attendees — they are for your own calendar
+hygiene. Use `E` when a change should notify people. All-day events cannot be
+nudged or duplicated yet.
+
 ## Create/edit workflow
 
 Event create/edit uses a single modal form rather than a step-by-step wizard.
+
+Fields: **Title**, **Date**, **Start**, **Duration**, **Location**, **Repeat**,
+**Notes**, **Attendees**.
 
 You can:
 
@@ -309,7 +329,27 @@ You can:
 - while editing a field, `j` / `k` type normally; use `Tab` / `⇧Tab` (or arrows) to move fields
 - leave field-edit mode with `Esc`
 - toggle attendees with `Space`
-- submit with `Enter`
+- in the Location field, cycle suggestions with `ctrl+n` / `ctrl+p` and accept with `ctrl+y`
+  (suggestions come from locations and meeting rooms on already-loaded events)
+- submit with `Enter` from any field
+
+The form shows a live preview of the resolved day, start → end time, and
+duration, so shorthand input is confirmed before you submit.
+
+### Flexible date/time input
+
+Date, Start, and Duration accept shorthand as well as the canonical forms:
+
+| Field | Accepted |
+|-------|----------|
+| Date | `2026-07-20`, `07-20`, `7/20`, `0720`, `20` (day of this month), `today`/`tod`, `tomorrow`/`tmr`/`tom`, `yesterday`/`yst`, `+3d`, `-1d`, `2w`, `+1m`, `+1y`, `mon`…`sun`, `next fri`, and the Korean `오늘`/`내일`/`어제` |
+| Start | `15:00`, `9:30`, `1530`, `930`, `15`, `3pm`, `3:30pm`, `11am`, `12am` (midnight), `12pm` (noon), `15시`, `9시30분` |
+| Duration | `30`, `45m`, `90m`, `1h`, `1.5h`, `1h30m`, `1h30`, `1일`, `30분`, `1시간30분` |
+| Repeat | empty/`none`, `daily`, `weekly`, `biweekly`, `monthly`, `yearly`, `weekdays`, Korean `매일`/`매주`/`격주`/`매월`/`평일`, plus an occurrence count: `weekly x4` |
+
+Whatever you type is normalized into the canonical form on submit, so the field
+text and the created event always agree. Weekday names resolve to the **next**
+occurrence (typing `wed` on a Wednesday means next Wednesday).
 
 When attendees are present, event creation/update uses Google Calendar
 `sendUpdates=all`, which sends invitation/update emails.

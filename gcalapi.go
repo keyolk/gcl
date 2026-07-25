@@ -544,23 +544,34 @@ func rememberCalendar(value string) {
 
 // createEventInput describes a new event to insert.
 type createEventInput struct {
-	Calendar  string    // calendar id/email/alias to create on
-	Title     string    // summary
-	Start     time.Time // absolute start (already in the intended tz)
-	End       time.Time // absolute end
-	Attendees []string  // attendee emails
-	Notify    bool      // sendUpdates=all when true
+	Calendar    string    // calendar id/email/alias to create on
+	Title       string    // summary
+	Start       time.Time // absolute start (already in the intended tz)
+	End         time.Time // absolute end
+	Location    string    // free-text location (omitted when empty)
+	Description string    // notes/agenda (omitted when empty)
+	Recurrence  []string  // RRULE lines, e.g. ["RRULE:FREQ=WEEKLY;COUNT=4"]
+	Attendees   []string  // attendee emails
+	Notify      bool      // sendUpdates=all when true
+}
+
+// createdEvent is what a successful insert returns: the web link for
+// confirmation and the event id, which the undo stack needs in order to delete
+// the event again.
+type createdEvent struct {
+	Link string
+	ID   string
 }
 
 // createEvent inserts a new event via Calendar v3 events.insert. When Notify is
 // true, Google emails invitations to attendees. Returns the created event's
 // htmlLink for confirmation.
-func createEvent(in createEventInput) (string, error) {
+func createEvent(in createEventInput) (createdEvent, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	at, err := googleToken.accessToken(ctx)
 	if err != nil {
-		return "", err
+		return createdEvent{}, err
 	}
 	calID := resolveCalendarID(in.Calendar)
 
@@ -572,14 +583,20 @@ func createEvent(in createEventInput) (string, error) {
 		Email string `json:"email"`
 	}
 	payload := struct {
-		Summary   string           `json:"summary"`
-		Start     apiDateTime      `json:"start"`
-		End       apiDateTime      `json:"end"`
-		Attendees []apiAttendeeReq `json:"attendees,omitempty"`
+		Summary     string           `json:"summary"`
+		Start       apiDateTime      `json:"start"`
+		End         apiDateTime      `json:"end"`
+		Location    string           `json:"location,omitempty"`
+		Description string           `json:"description,omitempty"`
+		Recurrence  []string         `json:"recurrence,omitempty"`
+		Attendees   []apiAttendeeReq `json:"attendees,omitempty"`
 	}{
-		Summary: in.Title,
-		Start:   apiDateTime{DateTime: in.Start.Format(time.RFC3339)},
-		End:     apiDateTime{DateTime: in.End.Format(time.RFC3339)},
+		Summary:     in.Title,
+		Start:       apiDateTime{DateTime: in.Start.Format(time.RFC3339)},
+		End:         apiDateTime{DateTime: in.End.Format(time.RFC3339)},
+		Location:    strings.TrimSpace(in.Location),
+		Description: strings.TrimSpace(in.Description),
+		Recurrence:  in.Recurrence,
 	}
 	for _, a := range in.Attendees {
 		a = strings.TrimSpace(a)
@@ -589,7 +606,7 @@ func createEvent(in createEventInput) (string, error) {
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return createdEvent{}, err
 	}
 
 	sendUpdates := "none"
@@ -600,13 +617,13 @@ func createEvent(in createEventInput) (string, error) {
 		url.PathEscape(calID), sendUpdates)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(body)))
 	if err != nil {
-		return "", err
+		return createdEvent{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+at)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", err
+		return createdEvent{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
@@ -617,26 +634,29 @@ func createEvent(in createEventInput) (string, error) {
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&e)
 		if e.Error.Message != "" {
-			return "", fmt.Errorf("create failed (%d): %s", resp.StatusCode, e.Error.Message)
+			return createdEvent{}, fmt.Errorf("create failed (%d): %s", resp.StatusCode, e.Error.Message)
 		}
-		return "", fmt.Errorf("create failed (%d)", resp.StatusCode)
+		return createdEvent{}, fmt.Errorf("create failed (%d)", resp.StatusCode)
 	}
 	var created struct {
 		HTMLLink string `json:"htmlLink"`
+		ID       string `json:"id"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&created)
-	return created.HTMLLink, nil
+	return createdEvent{Link: created.HTMLLink, ID: created.ID}, nil
 }
 
 // patchEventInput describes fields to update on an existing event.
 type patchEventInput struct {
-	Calendar  string
-	EventID   string
-	Title     string
-	Start     time.Time
-	End       time.Time
-	Attendees []string // full desired attendee set (replaces existing)
-	Notify    bool
+	Calendar    string
+	EventID     string
+	Title       string
+	Start       time.Time
+	End         time.Time
+	Location    string   // sent always so clearing the field takes effect
+	Description string   // sent always so clearing the field takes effect
+	Attendees   []string // full desired attendee set (replaces existing)
+	Notify      bool
 }
 
 // patchEvent updates an existing event via events.patch. Sends update emails
@@ -660,6 +680,10 @@ func patchEvent(in patchEventInput) (string, error) {
 		"summary": in.Title,
 		"start":   apiDateTime{DateTime: in.Start.Format(time.RFC3339)},
 		"end":     apiDateTime{DateTime: in.End.Format(time.RFC3339)},
+		// Sent unconditionally (even empty) so clearing a field in the form
+		// actually clears it on the event.
+		"location":    strings.TrimSpace(in.Location),
+		"description": strings.TrimSpace(in.Description),
 	}
 	// Always send attendees (even empty) so removals take effect.
 	atts := make([]apiAttendeeReq, 0, len(in.Attendees))
