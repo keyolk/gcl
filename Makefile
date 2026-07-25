@@ -21,7 +21,12 @@ build:
 
 install: build
 	mkdir -p $(BIN_DIR)
-	cp ./$(APP) $(BIN)
+	# Install atomically via a temp file + mv. Overwriting the binary in place
+	# with cp invalidates the ad-hoc code signature macOS attached to the
+	# already-running/previously-run image, and the next exec dies with
+	# SIGKILL (exit 137). rm+mv gives the new binary a fresh inode instead.
+	cp ./$(APP) $(BIN).new
+	mv -f $(BIN).new $(BIN)
 	@echo "installed $(BIN)"
 
 run:
