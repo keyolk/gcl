@@ -74,9 +74,14 @@ OAuth credentials from `gcalcli` — and builds a richer interactive interface o
 - Open the Google Calendar event page
 - Open secondary links (`L`) such as Zoom/docs
 - Jump to an attendee's calendar (`A`)
+- Copy event summaries, Calendar URLs, timestamps, and descriptions with `y` combinations
 - Create a new event (`N`)
 - Edit an event (`E`)
 - Delete an event (`X`)
+- Staged time adjustments (`)( }{ ><`) previewed in the view and written only on
+  `s` — see [Adjusting time](#adjusting-time-staged-then-saved)
+- "Active now" digest (`a`) of every event in effect at this moment, including
+  multi-day windows — see [Active now](#active-now-a)
 - Non-focus-stealing reminder toasts for upcoming events (in-app watcher or
   `--notify`), honoring each event's own reminder settings
 
@@ -266,12 +271,66 @@ upcoming events in the given window.
 
 ### Global
 
-- `q` — quit
+- `q` — quit (refused while a time change is unsaved — see below)
 - `?` — help
 - `Z` — cycle timezone (list configured via `timezones`; `local` first)
 - `n` — jump to now (today if loaded, else the nearest upcoming event)
+- `a` — **active now**: everything in effect at this moment
 - `e` — calendar picker
 - `/` — fuzzy search
+
+### Active now (`a`)
+
+Answers "what is in effect right now?" — the question a maintenance-window,
+on-call, or PTO calendar gets asked constantly and which the agenda answers
+badly. A window that started three days ago and ends tomorrow sits far above the
+`-- now --` divider, scrolled out of sight and visually identical to something
+long finished.
+
+`a` **toggles a docked panel** above the schedule listing every event whose span
+covers this moment, **ordered by what lapses first** so the one you may need to
+extend is at the top:
+
+```text
+  📅 me  e:switch   LIST | 2026-07-27 | step:day   🕓 local  🔴 2 active a
+  ◉ Active now (2) · 11:10   tab to focus
+▸ ends in 40m  ·  [ap3] istiod upgrade to 1.29
+    Jul 27 10:50-11:50  ·  ops-apne2
+  ends in 1d12h49m  ·  apne2 maintenance window
+    Jul 25 -> Jul 28 all-day
+
+ Sat Jul 25
+  all-day     apne2 maintenance window ◉now
+ * Mon Jul 27  (today)
+  10:50-11:50 [ap3] istiod upgrade to 1.29 ◉now 📍
+ -- now 11:10 -----------------------------------
+▸ 14:10-14:40 Standup
+```
+
+**It is a toggle, not a mode.** `a` does not move your cursor and does not take
+focus: the schedule below keeps every key it had, so you glance at what is
+running and carry on exactly where you were. `j`/`k`, `g`, `/`, `N`, the quick
+actions — all unchanged with the panel open.
+
+When you do want to work inside it, `tab` moves focus in:
+
+- `tab` — cycle focus: schedule → day detail (grid views) → active panel → back.
+  Panes that aren't on screen are skipped.
+- `j` / `k` — move the panel's cursor (the schedule selection follows along)
+- `Enter` — jump the schedule to that event and hand focus back
+- `E` / `X` / `L` / `A` / `o` — act on the highlighted window. The panel doesn't
+  intercept these: it keeps the schedule selection in sync, so they simply work.
+- `esc` — leave the panel, **keeping it open**. `a` is what closes it.
+
+Details:
+
+- multi-day and all-day spans are handled properly (the exclusive API end date
+  is not counted as active, so a 25→28 window stops being active on the 29th)
+- the header carries a live `🔴 n active` count, so you see it without asking
+- active events are also marked `◉now` in the agenda, grid, and detail pane
+- the panel is capped at a third of the body height and scrolls if more windows
+  are active than fit
+- the count and countdowns refresh on their own (30s tick) — no keypress needed
 
 ### List view
 
@@ -287,7 +346,7 @@ upcoming events in the given window.
 - `j` / `k` — move focus by week
 - `g` / `v` — return to list view
 - `M` — month grid
-- `tab` — move focus into the detail pane
+- `tab` — cycle focus (day detail pane, and the active panel when open)
 
 ### Event actions
 
@@ -298,22 +357,67 @@ upcoming events in the given window.
 - `E` — edit selected/current event
 - `X` — delete selected/current event
 
-### Quick actions (no form)
+### Copying event data (`y` combinations)
 
-Reschedule without opening the form. All of these act on the selected event
-(list view) or the first event on the focused day (grid views), and each one is
-undoable with `u`.
+Press `y`, then a second key to copy data from the selected/current event:
+
+- `yy` — a shareable summary (title, time, location, description, Calendar URL)
+- `yu` — Google Calendar event URL
+- `ys` — start timestamp
+- `ye` — end timestamp
+- `yd` — description
+- `y` then `Esc` — cancel
+
+Timed events use RFC3339 in the timezone currently selected with `Z`. All-day
+events copy dates instead; their end date is the last covered day, not Google
+Calendar's exclusive API boundary. If a time adjustment is staged, `yy`, `ys`,
+and `ye` copy the time currently previewed in the TUI and mark the summary as
+`UNSAVED`. Clipboard transfer uses OSC 52, so it works without invoking a
+platform-specific clipboard process and can pass through SSH/tmux when the
+terminal permits OSC 52 clipboard access.
+
+### Adjusting time (staged, then saved)
+
+Reschedule without opening the form. These keys **do not write to Google** — they
+only change what the view shows, so you can compose an adjustment, look at it,
+and then decide:
 
 - `)` / `(` — move the event 15 minutes later / earlier (duration preserved)
 - `}` / `{` — lengthen / shorten by 15 minutes (start preserved)
 - `>` / `<` — move to the next / previous day (time of day preserved)
+
+While a change is staged:
+
+- the event's row shows the **new** time with a `!+45m` marker in amber
+- the detail pane spells out `saved → staged` in full
+- the bottom bar turns amber and reads
+  `UNSAVED +45m on "Standup" | s SAVE to Google | esc discard`
+- `q` refuses to quit, so an adjustment is never lost by accident
+
+Then:
+
+- `s` — save the staged change to Google (one patch, however many nudges)
+- `esc` — discard it
+
+Repeated nudges compose: `)))` is one `+45m` save, not three round trips.
+Nudging back to the original time clears the staged change by itself. A failed
+save keeps the change staged so `s` can retry. Only one event can carry a staged
+change at a time; nudging a different one is refused rather than silently
+dropping the first.
+
+### Immediate actions
+
 - `D` — duplicate the event in place (title gets a `(copy)` suffix)
 - `W` — copy the event into the same slot next week
-- `u` — undo the last create / edit / delete / quick action
+- `u` — undo the last create / edit / delete / save
 
-Quick actions and undo never email attendees — they are for your own calendar
-hygiene. Use `E` when a change should notify people. All-day events cannot be
-nudged or duplicated yet.
+These apply right away — there is no meaningful half-applied state to render for
+a copy — and each is undoable with `u`.
+
+Saving a staged change, duplicating, and undo never email attendees — they are
+for your own calendar hygiene. Use `E` when a change should notify people.
+All-day events cannot be nudged (they have no time to move), but they can be
+duplicated.
 
 ## Create/edit workflow
 
@@ -380,6 +484,23 @@ make clean      # remove local build artifact
   - tall/narrow pane → detail split on the bottom
 - The interface is optimized for tmux use, keyboard navigation, and dense event
   browsing.
+- **Destructive-adjacent edits are staged, not immediate.** The nudge/resize/
+  day-move keys used to patch Google on every keypress, which turned one mental
+  adjustment into four round trips and put a mis-key on other people's calendars
+  before you could see the result. They now change only the rendered time until
+  `s`. Create/delete/duplicate stay immediate: there is no coherent
+  half-applied state to render for those, and `u` already covers them.
+- **"Active now" is a first-class view, not a search.** A span covering the
+  present moment is what an operations calendar is read for, and the agenda is
+  structurally bad at surfacing it (long windows scroll above the `now`
+  divider). The count lives in the header so it needs no query.
+- **The active panel is docked and non-modal.** It started as an overlay that
+  grabbed every key, which was wrong: checking what is running is a *glance*,
+  not a task you stop to do. Docking it above the schedule means toggling it
+  costs nothing — no lost cursor position, no keys to re-learn — and `tab` is
+  there for the rarer case where you want to work through the list. Panel
+  navigation keeps the schedule selection in sync rather than intercepting the
+  action keys, so `E`/`X`/`L` need no panel-specific code path.
 
 ## Limitations / future ideas
 

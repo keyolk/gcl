@@ -389,7 +389,7 @@ func fetchEventsAPI(calendar string, start, end time.Time) ([]Event, error) {
 }
 
 func apiEventToEvent(calendar string, it apiEvent) *Event {
-	var startDate time.Time
+	var startDate, endDate time.Time
 	var startTime, endTime string
 	var startAt, endAt time.Time
 	if it.Start.DateTime != "" {
@@ -405,6 +405,8 @@ func apiEventToEvent(calendar string, it apiEvent) *Event {
 			if te, err := time.Parse(time.RFC3339, it.End.DateTime); err == nil {
 				endAt = te
 				endTime = te.Local().Format("15:04")
+				le := te.Local()
+				endDate = time.Date(le.Year(), le.Month(), le.Day(), 0, 0, 0, 0, time.Local)
 			}
 		}
 	} else if it.Start.Date != "" {
@@ -413,6 +415,14 @@ func apiEventToEvent(calendar string, it apiEvent) *Event {
 			return nil
 		}
 		startDate = t
+		// All-day end dates are exclusive in the API. Keeping the raw value
+		// means "is this multi-day window active right now?" is a plain
+		// half-open interval test (see activeSpan).
+		if it.End.Date != "" {
+			if te, err := time.ParseInLocation("2006-01-02", it.End.Date, time.Local); err == nil {
+				endDate = te
+			}
+		}
 	} else {
 		return nil
 	}
@@ -476,6 +486,7 @@ func apiEventToEvent(calendar string, it apiEvent) *Event {
 	ev := &Event{
 		ID:            it.ID,
 		StartDate:     startDate,
+		EndDate:       endDate,
 		StartTime:     startTime,
 		EndTime:       endTime,
 		StartAt:       startAt,
