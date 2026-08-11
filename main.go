@@ -161,6 +161,10 @@ type fetchTickMsg struct{ reqID int }
 // notifyTickMsg fires the in-app reminder watcher on an interval.
 type notifyTickMsg struct{}
 
+// clockTickMsg is a pure repaint trigger for time-relative UI (active count,
+// "now" divider, countdowns). It carries no data and changes no state.
+type clockTickMsg struct{}
+
 type statusMsg string
 
 type viewMode int
@@ -174,8 +178,9 @@ const (
 type paneFocus int
 
 const (
-	focusMain paneFocus = iota
-	focusDetail
+	focusMain   paneFocus = iota
+	focusDetail           // grid: the right/bottom day-detail pane
+	focusActive           // the docked "active now" panel (only when it is open)
 )
 
 type model struct {
@@ -211,6 +216,19 @@ type model struct {
 	// preEdit snapshots the event's fields when an edit form opens, so a
 	// successful patch can be reversed back to those values.
 	preEdit *undoEntry
+	// pending holds a staged (not yet saved) time change from the nudge/resize/
+	// day-move keys. The views render the staged time; only `s` writes it to
+	// Google. nil means nothing is staged.
+	pending *pendingShift
+	// activeOpen toggles the docked "active now" panel. It is NOT a mode: the
+	// panel appears alongside the schedule and normal navigation keeps working
+	// until you deliberately move focus into it with `tab`.
+	activeOpen bool
+	// activeIndex is the cursor inside the active panel (used once focused).
+	activeIndex int
+	// yankPending means `y` was pressed and the next key chooses which event
+	// field is copied. It is a prefix, not a modal overlay.
+	yankPending bool
 }
 
 // createState holds the step-by-step new-event form.
@@ -373,6 +391,13 @@ var (
 	calPillStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("232")).Background(lipgloss.Color("212")).Padding(0, 1)
 	metaStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("189")).Background(lipgloss.Color("62")).Padding(0, 1)
 	tzPillStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("232")).Background(lipgloss.Color("150")).Padding(0, 1)
+	// activePillStyle marks the header's "in effect right now" counter. Red
+	// background because it is a state, not a navigation aid.
+	activePillStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("124")).Padding(0, 1)
+	// Staged (unsaved) time changes: amber, so "not yet real" never reads the
+	// same as a committed time.
+	pendingStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
+	pendingBarStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("232")).Background(lipgloss.Color("214"))
 )
 
 func main() {
@@ -479,11 +504,18 @@ func fatalf(format string, args ...any) {
 }
 
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.loadCmd(m.inflightReq)}
+	cmds := []tea.Cmd{m.loadCmd(m.inflightReq), clockTickCmd()}
 	if settings.notify {
 		cmds = append(cmds, notifyTickCmd())
 	}
 	return tea.Batch(cmds...)
+}
+
+// clockTickCmd re-renders on a slow interval so time-relative UI stays honest
+// without input: the header's active count, the "now" divider, the ◉now badges,
+// and the "ends in ~" countdowns all move on their own.
+func clockTickCmd() tea.Cmd {
+	return tea.Tick(30*time.Second, func(time.Time) tea.Msg { return clockTickMsg{} })
 }
 
 // notifyTickCmd schedules the next in-app reminder scan.
@@ -516,6 +548,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case notifyTickMsg:
 		// Fire a background scan and re-arm the watcher.
 		return m, tea.Batch(m.notifyScanCmd(), notifyTickCmd())
+	case clockTickMsg:
+		// Nothing to update: View() reads time.Now() directly. Just re-arm so
+		// the next repaint happens.
+		return m, clockTickCmd()
 	case eventsMsg:
 		// Drop stale responses from superseded requests.
 		if msg.reqID != m.inflightReq {
@@ -541,6 +577,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case statusMsg:
 		m.status = string(msg)
+		return m, nil
+	case clipboardCopiedMsg:
+		if msg.err != nil {
+			m.status = "copy failed: " + msg.err.Error()
+		} else {
+			m.status = "copied " + msg.label
+		}
 		return m, nil
 	case createdMsg:
 		m.create.submitting = false
@@ -605,8 +648,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventShiftedMsg:
 		if msg.err != nil {
 			m.err = msg.err
+			if msg.committed && m.pending != nil {
+				// The patch failed; keep the staged change so `s` can retry
+				// rather than making the user redo the nudges.
+				p := *m.pending
+				p.saving = false
+				m.pending = &p
+				m.status = "save failed: " + msg.err.Error() + " · s retries, esc discards"
+				return m, nil
+			}
 			m.status = "shift failed: " + msg.err.Error()
 			return m, nil
+		}
+		if msg.committed {
+			m.pending = nil
 		}
 		m.lastUndo = msg.restore
 		m.status = msg.label + " · u to undo"
@@ -797,15 +852,74 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Quick actions (nudge/resize/duplicate/undo) act on the selected event
-	// without opening the form. Checked before the main dispatch so they can
-	// own their keys, and falling through when the key isn't one of theirs.
+	// A pending yank prefix owns the next key before quick actions get a chance
+	// to interpret it (notably, `ys` copies start instead of saving a staged move).
+	if m.yankPending {
+		return m.handleYankKey(key)
+	}
+
+	// Active-now panel, while focus is inside it. The panel is docked, not modal:
+	// it only reaches this block after `tab` moved focus into it, and only the
+	// keys that mean something *in the list* are claimed. Everything else
+	// (view switches, `n`, `/`, `R`, `Z`, `N`, quick actions) falls through to
+	// the normal dispatch and keeps working with the panel still on screen.
+	if m.activePanelFocused() {
+		evs := m.activeEvents(time.Now())
+		switch key {
+		case "esc":
+			// Leave the panel but keep it open — esc backs out of the focus, not
+			// out of the view. `a` is what closes it.
+			m.focusPane = focusMain
+			m.status = "focus: schedule (panel still open, a closes it)"
+			return m, nil
+		case "down", "j", "ctrl+n":
+			m.activeIndex = min(m.activeIndex+1, max(0, len(evs)-1))
+			m.syncSelectionToActive()
+			return m, nil
+		case "up", "k", "ctrl+p":
+			m.activeIndex = max(0, m.activeIndex-1)
+			m.syncSelectionToActive()
+			return m, nil
+		case "g", "G", "home", "end":
+			if key == "g" || key == "home" {
+				m.activeIndex = 0
+			} else {
+				m.activeIndex = max(0, len(evs)-1)
+			}
+			m.syncSelectionToActive()
+			return m, nil
+		case "enter":
+			// Jump the schedule to this event and hand focus back, so the panel
+			// acts as a launcher rather than a place you get stuck in.
+			if len(evs) == 0 {
+				return m, nil
+			}
+			m.syncSelectionToActive()
+			m.focusPane = focusMain
+			m.status = "jumped to " + evs[max(0, min(m.activeIndex, len(evs)-1))].Title
+			return m, nil
+		}
+		// Not a panel-list key: the schedule selection already tracks the panel
+		// cursor (syncSelectionToActive), so E/X/L/A/o and the quick actions act
+		// on the highlighted event via the normal dispatch below.
+	}
+
+	// Quick actions (nudge/resize/duplicate/save/discard/undo) act on the
+	// selected event without opening the form. Checked before the main dispatch
+	// so they can own their keys, and falling through when the key isn't one of
+	// theirs.
 	if mm, cmd, handled := m.handleQuickAction(key); handled {
 		return mm, cmd
 	}
 
 	switch key {
 	case "q", "ctrl+c":
+		// Quitting with an unsaved nudge would silently throw it away. Ask for
+		// an explicit discard (esc) or save (s) first.
+		if m.pending != nil {
+			m.status = "unsaved " + m.pending.label() + " on \"" + m.pending.title + "\" — s to save, esc to discard, then q"
+			return m, nil
+		}
 		return m, tea.Quit
 	case "down", "j":
 		if m.view == viewList {
@@ -877,14 +991,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "no event selected"
 		}
 	case "tab":
-		if m.view != viewList {
-			if m.focusPane == focusMain {
-				m.focusPane = focusDetail
-				m.clampGridDetail()
-			} else {
-				m.focusPane = focusMain
-			}
-		}
+		m.cycleFocus()
 	case "R":
 		return m, m.reload()
 	case "Z":
@@ -943,6 +1050,31 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.preEdit = undoSnapshot(ev, m.calendar, undoPatch)
 			}
 		}
+	case "a":
+		// Toggle the docked panel. This deliberately does NOT move focus or the
+		// selection: you glance at what is in effect while staying exactly where
+		// you were in the agenda. `tab` is what steps into it.
+		m.activeOpen = !m.activeOpen
+		if !m.activeOpen {
+			if m.focusPane == focusActive {
+				m.focusPane = focusMain
+			}
+			m.status = "active panel closed"
+			return m, nil
+		}
+		m.activeIndex = 0
+		if n := len(m.activeEvents(time.Now())); n == 0 {
+			m.status = "nothing active right now"
+		} else {
+			m.status = fmt.Sprintf("%d active · tab to focus the panel", n)
+		}
+	case "y":
+		if m.currentActionEvent() == nil {
+			m.status = "no event selected"
+			return m, nil
+		}
+		m.yankPending = true
+		m.status = yankHint
 	case "?":
 		m.mode = modeHelp
 	}
@@ -1008,6 +1140,45 @@ func (m *model) resetGridTop() {
 		m.gridTop = weekStart(monthStart(m.anchor))
 	} else {
 		m.gridTop = weekStart(m.anchor)
+	}
+}
+
+// cycleFocus advances `tab` through the panes that currently exist: the
+// schedule, the grid's day-detail pane (grid views only), and the docked active
+// panel (only while it is open). Panes that are not on screen are skipped, so
+// tab never lands somewhere invisible.
+func (m *model) cycleFocus() {
+	order := []paneFocus{focusMain}
+	if m.view != viewList {
+		order = append(order, focusDetail)
+	}
+	if m.activeOpen {
+		order = append(order, focusActive)
+	}
+	if len(order) == 1 {
+		m.status = "nothing else to focus (a opens the active panel)"
+		return
+	}
+	at := 0
+	for i, f := range order {
+		if f == m.focusPane {
+			at = i
+			break
+		}
+	}
+	m.focusPane = order[(at+1)%len(order)]
+	switch m.focusPane {
+	case focusDetail:
+		m.clampGridDetail()
+		m.status = "focus: day detail"
+	case focusActive:
+		// Entering the panel puts the schedule selection on the cursor's event
+		// straight away, so the acting keys are consistent from the first frame.
+		m.clampActiveIndex()
+		m.syncSelectionToActive()
+		m.status = "focus: active panel · j/k move · Enter jump · esc back"
+	default:
+		m.status = "focus: schedule"
 	}
 }
 
@@ -1156,12 +1327,16 @@ type undoneMsg struct {
 	label string
 }
 
-// eventShiftedMsg reports the result of a quick action (nudge/resize/duplicate)
-// performed directly on the selected event, without opening the form.
+// eventShiftedMsg reports the result of a quick action (duplicate) or of saving
+// a staged time change, performed directly on the selected event without
+// opening the form.
 type eventShiftedMsg struct {
 	err     error
 	label   string
 	restore *undoEntry
+	// committed marks this as the result of saving a staged change (`s`), so the
+	// handler knows to clear the staged state. Duplicates leave it false.
+	committed bool
 }
 
 func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1630,7 +1805,7 @@ func (m model) View() string {
 		return "loading~"
 	}
 	viewName := map[viewMode]string{viewList: "LIST", viewWeek: "WEEK", viewMonth: "MONTH"}[m.view]
-	calPill := calPillStyle.Render("📅 " + m.calendarDisplayName())
+	calPill := calPillStyle.Render("📅 " + m.calendarDisplayName() + "  e:switch")
 	tzPill := tzPillStyle.Render("🕓 " + m.tzLabel())
 	metaText := fmt.Sprintf("%s | %s", viewName, m.anchor.Format("2006-01-02"))
 	if m.view == viewList {
@@ -1638,12 +1813,28 @@ func (m model) View() string {
 	}
 	meta := metaStyle.Render(" " + metaText + " ")
 	headerContent := calPill + meta + tzPill
-	headerLine := topBarStyle.Width(max(0, m.width-2)).Render(truncate(headerContent, max(1, m.width-2)))
+	// An in-effect event is the thing you most need to know without asking, so
+	// the count lives in the header and doubles as the advert for `a`.
+	if label := m.activeCountLabel(time.Now()); label != "" {
+		headerContent += activePillStyle.Render(label + " a")
+	}
+	// The header is built from styled pills, so it must be cut with the
+	// ANSI-aware truncator: the plain one slices runes and would eat a reset
+	// sequence, bleeding style into the rest of the frame. topBarStyle also pads
+	// 1 cell on each side, and lipgloss counts that inside Width(), so the
+	// content has to fit in width-4 or the bar wraps and steals a body row.
+	headerWidth := max(1, m.width-2)
+	headerLine := topBarStyle.Width(headerWidth).Render(ansiTruncateTail(headerContent, max(1, headerWidth-2)))
 
 	// The frame is header (1) + body + status (1) + hint (1); body must therefore
 	// be height-3 rows so the whole thing fills exactly m.height.
 	contentHeight := max(4, m.height-3)
 	bodyWidth := max(20, m.width-2)
+	// The docked active panel takes rows off the TOP of the body: "what is in
+	// effect now" belongs above "what is coming", and a top dock keeps the
+	// schedule's own scroll position undisturbed when the panel toggles.
+	activeH := m.activePanelHeight(contentHeight)
+	scheduleHeight := max(3, contentHeight-activeH)
 	var body string
 	if m.loading {
 		body = cardStyle.Width(max(20, bodyWidth-4)).Render("loading calendar events~")
@@ -1662,17 +1853,21 @@ func (m model) View() string {
 		case splitRight:
 			rightW := max(34, bodyWidth/3)
 			leftW := max(30, bodyWidth-rightW-1)
-			left := fitPane(schedule(leftW, contentHeight), leftW, contentHeight)
-			right := fitPane(m.viewDetailCard(rightW, contentHeight), rightW, contentHeight)
+			left := fitPane(schedule(leftW, scheduleHeight), leftW, scheduleHeight)
+			right := fitPane(m.viewDetailCard(rightW, scheduleHeight), rightW, scheduleHeight)
 			body = lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
 		case splitBottom:
-			detailH := max(6, contentHeight/3)
-			topH := max(4, contentHeight-detailH)
+			detailH := max(6, scheduleHeight/3)
+			topH := max(4, scheduleHeight-detailH)
 			top := fitPane(schedule(bodyWidth, topH), bodyWidth, topH)
 			bottom := fitPane(m.viewDetailCard(bodyWidth, detailH), bodyWidth, detailH)
 			body = top + "\n" + bottom
 		default: // no split - too small for a detail pane
-			body = schedule(bodyWidth, contentHeight)
+			body = schedule(bodyWidth, scheduleHeight)
+		}
+		if activeH > 0 {
+			panel := fitPane(m.viewActivePanel(bodyWidth, activeH), bodyWidth, activeH)
+			body = panel + "\n" + clampToHeight(body, scheduleHeight)
 		}
 	}
 
@@ -1689,7 +1884,13 @@ func (m model) View() string {
 	}
 
 	statusLine := statusStyle.Render(truncate("  "+m.status, m.width))
-	hintLine := hintBarStyle.Width(max(0, m.width)).Render(truncate(m.shortcutHint(), max(1, m.width)))
+	// The hint bar turns amber while a change is staged, so an unsaved nudge is
+	// impossible to mistake for a saved one even at a glance.
+	barStyle := hintBarStyle
+	if m.pending != nil {
+		barStyle = pendingBarStyle
+	}
+	hintLine := barStyle.Width(max(0, m.width)).Render(truncate(m.shortcutHint(), max(1, m.width)))
 
 	var b strings.Builder
 	b.WriteString(headerLine)
@@ -1783,7 +1984,34 @@ func ansiTruncate(s string, width int) string {
 	return ansi.Truncate(s, width, "")
 }
 
+// ansiTruncateTail is ansiTruncate with a "~" marker when something was cut, for
+// styled content (pills, headers) where the plain truncate() would slice through
+// an escape sequence and bleed color into the rest of the frame.
+func ansiTruncateTail(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= width {
+		return s
+	}
+	return ansi.Truncate(s, width, "~")
+}
+
 func (m model) shortcutHint() string {
+	if m.yankPending && m.mode == modeNormal {
+		return " " + yankHint + " "
+	}
+	// An unsaved change owns the hint bar: it is the only thing that needs
+	// doing, and the keys that resolve it must not compete with 20 others.
+	if m.pending != nil {
+		return " UNSAVED " + m.pending.label() + " on \"" + truncate(m.pending.title, 30) +
+			"\"  |  s SAVE to Google  |  esc discard  |  )( }{ >< keep adjusting "
+	}
+	// Focus inside the docked active panel: show the panel's own keys, but keep
+	// naming tab/a so it never feels like a trap.
+	if m.activePanelFocused() && m.mode == modeNormal {
+		return " ACTIVE PANEL  |  j/k move  |  Enter jump to it  |  E/X/L act on it  |  tab next pane  |  esc back to schedule  |  a close "
+	}
 	switch m.mode {
 	case modeSearch:
 		return " / fuzzy search  |  up/dn move  |  Enter jump  |  ESC cancel "
@@ -1798,10 +2026,15 @@ func (m model) shortcutHint() string {
 	case modeFormHelp:
 		return " form help  |  ESC / ? close "
 	default:
-		if m.view != viewList {
-			return " h/l +/-day | j/k +/-week | g->list | M month-grid | n now | A attendees | L links | E edit | X del | N new | e cal | Z tz | / | ? | q "
+		// While the panel is open but unfocused, tab is the key that matters.
+		act := "a active"
+		if m.activeOpen {
+			act = "tab->panel | a close"
 		}
-		return " h/l move(step) | d/w/m step | j/k select | n now | g grid | Z tz | N new | E edit | X del | )( ±15m | }{ resize | >< ±day | D dup | u undo | ↵ open | / search | ? | q "
+		if m.view != viewList {
+			return " h/l +/-day | j/k +/-week | g->list | M month-grid | n now | " + act + " | e calendar | A attendees | L links | y copy | E edit | X del | N new | Z tz | / | ? | q "
+		}
+		return " h/l move(step) | d/w/m step | j/k select | n now | " + act + " | e calendar | g grid | N new | E edit | X del | y copy | )( ±15m | }{ resize | >< ±day → s saves | D dup | u undo | ↵ open | / | ? | q "
 	case modeCreate:
 		return " new/edit event  |  type to edit  |  Enter save  |  Tab/S-Tab field  |  ESC back  |  Space toggle attendee "
 	case modeConfirmDelete:
@@ -1811,7 +2044,13 @@ func (m model) shortcutHint() string {
 
 func (m model) viewScheduleCards(width, height int) string {
 	if len(m.events) == 0 {
-		return cardStyle.Width(max(20, width-2)).Render("No events in this range")
+		// An empty calendar is the moment "wrong calendar?" is most likely, and
+		// the moment there is nothing else on screen to learn from — so the
+		// calendar switcher gets named here rather than only in the hint bar.
+		msg := "No events in this range\n\n" +
+			mutedStyle.Render("e  switch calendar (fuzzy: recent, subscribed, aliases)") + "\n" +
+			mutedStyle.Render("N  new event    n  jump to now    R  refresh    ?  help")
+		return cardStyle.Width(max(20, width-2)).Render(msg)
 	}
 	return m.viewAgendaCards(width, height)
 }
@@ -1935,7 +2174,16 @@ func (m model) viewGrid(width, height int) string {
 					if !ev.AllDay() && !ev.StartAt.IsZero() {
 						tm = ev.StartAt.In(m.tz()).Format("15:04") + " "
 					}
-					txt = " " + truncate(tm+ev.Title, inner-1)
+					mark := ""
+					if m.pendingFor(ev) != nil {
+						mark = "!"
+					} else if isActiveAt(ev, time.Now()) {
+						mark = "◉"
+					}
+					txt = " " + truncate(mark+tm+ev.Title, inner-1)
+					if mark == "!" {
+						txt = pendingStyle.Render(txt)
+					}
 				}
 				cell := padRightW(txt, colW)
 				if sameDay(day, m.anchor) {
@@ -2062,8 +2310,24 @@ func locationWithoutRooms(ev *Event) string {
 // eventRow is a single compact line: [time] title  badges. The time is a filled
 // pill so consecutive events are visually separated even without blank lines.
 func (m model) eventRow(ev *Event, selected bool, width int) string {
-	tl := fmt.Sprintf("%-11s", m.timeLabel(ev))
+	// A staged change shows the time it WOULD have, marked so it never passes
+	// for a saved one.
+	pending := m.pendingFor(ev)
+	label := m.timeLabel(ev)
+	if pending != nil {
+		loc := m.tz()
+		label = pending.start().In(loc).Format("15:04") + "-" + pending.end().In(loc).Format("15:04")
+	}
+	tl := fmt.Sprintf("%-11s", label)
 	badges := ""
+	if pending != nil {
+		badges += " " + pendingBadge(pending)
+	}
+	// An event straddling this moment is what a maintenance-window calendar is
+	// read for; mark it in the agenda too, not only in the `a` panel.
+	if isActiveAt(ev, time.Now()) {
+		badges += " ◉now"
+	}
 	if n := len(ev.Attendees); n > 0 {
 		badges += fmt.Sprintf(" 👥%d", n)
 	}
@@ -2077,7 +2341,13 @@ func (m model) eventRow(ev *Event, selected bool, width int) string {
 	title := truncate(ev.Title, titleRoom)
 	if selected {
 		line := fmt.Sprintf("▸ %s %s%s", tl, title, badges)
+		if pending != nil {
+			return pendingStyle.Render(line)
+		}
 		return selectedRowStyle.Render(line)
+	}
+	if pending != nil {
+		return "  " + pendingStyle.Render(tl+" "+title+badges)
 	}
 	return "  " + timePillMini.Render(tl) + " " + title + mutedStyle.Render(badges)
 }
@@ -2123,7 +2393,18 @@ func (m model) viewDayDetail(width, height int) string {
 		if !ev.AllDay() && !ev.StartAt.IsZero() {
 			tm = m.timeLabel(ev)
 		}
+		pending := m.pendingFor(ev)
+		if pending != nil {
+			loc := m.tz()
+			tm = pending.start().In(loc).Format("15:04") + "-" + pending.end().In(loc).Format("15:04")
+		}
 		badges := ""
+		if pending != nil {
+			badges += " " + pendingBadge(pending)
+		}
+		if isActiveAt(ev, time.Now()) {
+			badges += " ◉now"
+		}
 		if n := len(ev.Attendees); n > 0 {
 			badges += fmt.Sprintf(" 👥%d", n)
 		}
@@ -2134,6 +2415,9 @@ func (m model) viewDayDetail(width, height int) string {
 		if m.focusPane == focusDetail && i == max(0, min(m.gridDetail, len(evs)-1)) {
 			line = selectedRowStyle.Render(truncate("▸ "+tm+" "+ev.Title+badges, iw))
 		}
+		if pending != nil {
+			line = pendingStyle.Render(truncate(tm+" "+ev.Title+badges, iw))
+		}
 		lines = append(lines, line)
 		if loc := locationWithoutRooms(ev); loc != "" {
 			lines = append(lines, mutedStyle.Render("     @ "+truncate(loc, iw-7)))
@@ -2143,7 +2427,7 @@ func (m model) viewDayDetail(width, height int) string {
 		}
 	}
 	lines = append(lines, "")
-	lines = append(lines, mutedStyle.Render("tab detail focus | j/k event | A/L/E/X act | enter open calendar"))
+	lines = append(lines, mutedStyle.Render("tab detail focus | j/k event | a active now | e calendar | A/L/E/X act"))
 	content := truncateLines(strings.Join(lines, "\n"), inner, iw)
 	return detailStyle.Width(max(28, width)).Height(inner).Render(content)
 }
@@ -2161,6 +2445,29 @@ func (m model) viewDetailCard(width, height int) string {
 	lines = append(lines, sectionTitleStyle.Render(truncate("  "+ev.Title+"  ", max(10, width-4))))
 	lines = append(lines, "")
 	lines = append(lines, pillStyle.Render(ev.StartDate.Format("Mon Jan 02"))+" "+pillStyle.Render(m.timeLabel(ev)))
+	// A staged change spells out saved → staged in full here, since the row can
+	// only fit the delta. Pre-truncated to the card's content width (padding is
+	// 3 cells) so lipgloss never re-wraps and pushes the card past `height`; the
+	// diff splits across two lines when the pane is too narrow for one.
+	if p := m.pendingFor(ev); p != nil {
+		iw := max(10, width-4)
+		lines = append(lines, pendingStyle.Render(truncate("! unsaved "+p.label(), iw)))
+		before, after := p.diffParts(m.tz())
+		if lipgloss.Width(before+" -> "+after) <= iw-2 {
+			lines = append(lines, pendingStyle.Render("  "+before+" -> "+after))
+		} else {
+			lines = append(lines, mutedStyle.Render(truncate("  from "+before, iw)))
+			lines = append(lines, pendingStyle.Render(truncate("  to   "+after, iw)))
+		}
+		lines = append(lines, mutedStyle.Render(truncate("  s saves · esc discards", iw)))
+	}
+	if isActiveAt(ev, time.Now()) {
+		// How long it has been running matters for a maintenance window in a way
+		// it doesn't for a meeting — the detail pane has room to say both.
+		now := time.Now()
+		lines = append(lines, activePillStyle.Render("◉ active now")+" "+mutedStyle.Render(remainingLabel(ev, now)))
+		lines = append(lines, mutedStyle.Render(truncate("  "+elapsedLabel(ev, now), max(10, width-4))))
+	}
 	if loc := locationWithoutRooms(ev); loc != "" {
 		lines = append(lines, linkStyle.Render("@ ")+wrap(loc, max(10, width-4)))
 	}
@@ -2798,6 +3105,8 @@ func (m model) focusDayEvents() []*Event {
 // List view -> the selected agenda event.
 // Grid view -> the selected event inside the detail pane when it has focus,
 // otherwise the first event of the focused day.
+// The active-now panel does not need a branch here: its action keys move the
+// real selection onto the panel's event before falling through to the dispatch.
 func (m model) currentActionEvent() *Event {
 	if m.view == viewList {
 		return m.selectedEvent()
@@ -3243,15 +3552,33 @@ func helpLines() []string {
 		"List    h/l move by step | d/w/m set step (day/week/month) | j/k select",
 		"Grid    h/l +/-day | j/k +/-week | focus cursor only; calendar stays put",
 		"        detail pane splits right (wide) or bottom (tall); A/L/E/X act on focus day",
+		"a       ACTIVE NOW panel: every event in effect at this moment, soonest-",
+		"        ending first. Multi-day windows (maintenance, on-call, PTO) show",
+		"        up here even when the agenda has scrolled them out of sight.",
+		"        `a` only TOGGLES the panel — it never moves your cursor, and the",
+		"        schedule keeps taking every key while the panel sits above it.",
+		"tab     cycle focus: schedule -> day detail (grid) -> active panel",
+		"        Inside the panel: j/k move · Enter jump the schedule to it",
+		"        · esc leave the panel (still open) · E/X/L act on the highlighted",
+		"        window · a closes it. The header shows the live count.",
+		"e       CALENDAR SWITCHER: fuzzy pick across recent *, subscribed,",
+		"        and aliases; type a raw email/id to open one directly",
 		"Common  n jump to now (today, else nearest upcoming) | R refresh | Z timezone (" + tzHint + ")",
 		"Open    Enter opens the Google Calendar event page",
 		"L       other links picker (zoom, docs, ~) (fuzzy)",
 		"A       attendees picker -> open that person's calendar",
-		"e       calendar picker (recent *, subscribed, aliases; fuzzy)",
+		"y...    copy selected event: yy summary | yu calendar URL",
+		"        ys start | ye end | yd description (OSC 52 clipboard)",
 		"N       new event | E edit selected | X delete (confirm)",
-		"Quick   ) / ( move start +/-15m | } / { lengthen/shorten 15m",
-		"        > / < move to next/prev day | D duplicate | W copy to next week",
-		"u       undo last create/edit/delete/quick action",
+		"Time    ) / ( move start +/-15m | } / { lengthen/shorten 15m",
+		"        > / < move to next/prev day",
+		"        These only change the VIEW: the new time shows with a ! marker",
+		"        and the bar turns amber. Nothing reaches Google until you press:",
+		"s       SAVE the staged time change   |   esc  discard it",
+		"        (repeated nudges compose into one save; q refuses to quit while",
+		"        a change is unsaved)",
+		"D / W   duplicate | copy to next week (these apply immediately)",
+		"u       undo last create/edit/delete/save",
 		"Form    date: today/tmr/mon/+3d/7-20 | time: 3pm/1530/15시 | dur: 1h30m/90m",
 		"        repeat: daily/weekly/biweekly/monthly/weekdays (+ x4 for 4 times)",
 		"        location: ctrl+n/ctrl+p cycle suggestions, ctrl+y accept",
@@ -3283,6 +3610,7 @@ func formHelpLines() []string {
 		"Notes   free text (agenda/body)",
 		"",
 		"Quick   ) / ( move start +/-15m | } / { lengthen/shorten 15m | > / < move +/-1 day",
+		"        these only stage the change — s saves it, esc discards",
 		"        D duplicate | W copy to next week | u undo",
 		"        quick actions never mail attendees (use E to notify)",
 	}
