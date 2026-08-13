@@ -1229,6 +1229,14 @@ func eventSortInstant(ev *Event) time.Time {
 	if ev.AllDay() {
 		return ev.StartDate
 	}
+	if ev.StartAt.IsZero() {
+		// Defensive: a timed event whose absolute instant never got filled in
+		// would otherwise sort as year 0001 and drag the "now" divider with it.
+		if s, _ := tsvInstants(ev); !s.IsZero() {
+			return s
+		}
+		return ev.StartDate
+	}
 	return ev.StartAt
 }
 
@@ -3279,6 +3287,13 @@ func fetchEventsGcalcli(calendar string, start, end time.Time) ([]Event, error) 
 		if ev.Title == "" {
 			ev.Title = "(no title)"
 		}
+		// The TSV carries dates and wall-clock times as separate columns, but the
+		// rest of the app reasons about timed events through StartAt/EndAt — the
+		// "now" divider, the active-window test, quick-action nudges and the
+		// duplicate payload all read them. Leaving them zero here made a
+		// gcalcli-sourced day look like a set of all-day events: every timed event
+		// reported itself active, and the divider sank below the whole day.
+		ev.StartAt, ev.EndAt = tsvInstants(&ev)
 		ev.Links = uniqueLinks([]string{
 			ev.ConferenceURI,
 			get("hangout_link"),
@@ -3411,6 +3426,34 @@ func parseDate(value string) (time.Time, error) {
 		return time.Time{}, errors.New("empty date")
 	}
 	return time.ParseInLocation("2006-01-02", value, time.Local)
+}
+
+// tsvInstants derives the absolute start/end of a timed event from the separate
+// date and wall-clock columns the gcalcli TSV provides. All-day events keep zero
+// instants, which is what AllDay()-aware code expects; an unparseable or missing
+// time also yields zero, so callers that already guard on IsZero() are unchanged.
+func tsvInstants(ev *Event) (start, end time.Time) {
+	if ev.AllDay() {
+		return time.Time{}, time.Time{}
+	}
+	at := func(date time.Time, clock string) time.Time {
+		if date.IsZero() || clock == "" {
+			return time.Time{}
+		}
+		t, err := time.ParseInLocation("2006-01-02 15:04", date.Format("2006-01-02")+" "+clock, time.Local)
+		if err != nil {
+			return time.Time{}
+		}
+		return t
+	}
+	start = at(ev.StartDate, ev.StartTime)
+	// A missing end_date means the event ends on the day it starts.
+	endDate := ev.EndDate
+	if endDate.IsZero() {
+		endDate = ev.StartDate
+	}
+	end = at(endDate, ev.EndTime)
+	return start, end
 }
 
 func cleanText(value string) string {

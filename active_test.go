@@ -372,3 +372,56 @@ func TestActivePanelEnterJumpsAndReleasesFocus(t *testing.T) {
 		t.Errorf("Enter selected %+v, want the panel's event 'longer'", ev)
 	}
 }
+
+// The gcalcli TSV path supplies dates and wall-clock times in separate columns.
+// When those never became absolute instants, every timed event fell through to
+// the all-day branch of activeSpan: the whole day reported itself "in effect",
+// and the "now" divider — which sorts on eventSortInstant — sank below the day
+// because a zero StartAt sorts as year 0001.
+func TestTimedEventWithoutAbsoluteInstantsIsNotTreatedAsAllDay(t *testing.T) {
+	day := time.Date(2026, 8, 13, 0, 0, 0, 0, time.Local)
+	now := time.Date(2026, 8, 13, 14, 6, 0, 0, time.Local)
+	ev := &Event{
+		Title: "Core Platform daily sync", StartDate: day, EndDate: day,
+		StartTime: "09:30", EndTime: "10:30",
+	}
+
+	start, end := activeSpan(ev)
+	wantStart := time.Date(2026, 8, 13, 9, 30, 0, 0, time.Local)
+	wantEnd := time.Date(2026, 8, 13, 10, 30, 0, 0, time.Local)
+	if !start.Equal(wantStart) || !end.Equal(wantEnd) {
+		t.Errorf("activeSpan = %v..%v, want %v..%v", start, end, wantStart, wantEnd)
+	}
+	if isActiveAt(ev, now) {
+		t.Error("a 09:30-10:30 event must not report itself active at 14:06")
+	}
+	if got := eventSortInstant(ev); !got.Equal(wantStart) {
+		t.Errorf("eventSortInstant = %v, want %v", got, wantStart)
+	}
+}
+
+// An end time on the following day (a window crossing midnight) must keep its
+// real end rather than collapsing onto the start date.
+func TestTsvInstantsCrossMidnight(t *testing.T) {
+	ev := &Event{
+		StartDate: time.Date(2026, 8, 13, 0, 0, 0, 0, time.Local),
+		EndDate:   time.Date(2026, 8, 14, 0, 0, 0, 0, time.Local),
+		StartTime: "23:30", EndTime: "00:30",
+	}
+	start, end := tsvInstants(ev)
+	if want := time.Date(2026, 8, 13, 23, 30, 0, 0, time.Local); !start.Equal(want) {
+		t.Errorf("start = %v, want %v", start, want)
+	}
+	if want := time.Date(2026, 8, 14, 0, 30, 0, 0, time.Local); !end.Equal(want) {
+		t.Errorf("end = %v, want %v", end, want)
+	}
+}
+
+// All-day events keep zero instants: AllDay()-aware code reads StartDate/EndDate
+// and relies on the zero value to tell the two shapes apart.
+func TestTsvInstantsLeavesAllDayZero(t *testing.T) {
+	ev := &Event{StartDate: time.Date(2026, 8, 13, 0, 0, 0, 0, time.Local)}
+	if start, end := tsvInstants(ev); !start.IsZero() || !end.IsZero() {
+		t.Errorf("all-day got %v..%v, want zero instants", start, end)
+	}
+}
