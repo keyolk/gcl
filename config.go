@@ -26,6 +26,7 @@ type appSettings struct {
 
 	defaultCalendar string     // calendar opened at startup (alias/email/id)
 	defaultStep     string     // list-view h/l step: "day" | "week" | "month"
+	timeline        bool       // list-view 24h overlap bars + density ruler (t toggles)
 	eventTime       string     // default start time for new events (HH:MM)
 	eventDuration   int        // default duration for new events (minutes)
 	timezones       []tzOption // timezones cycled with the Z shortcut
@@ -38,6 +39,7 @@ var settings = appSettings{
 	notifyInterval:  30,
 	defaultCalendar: "me",
 	defaultStep:     "day",
+	timeline:        true,
 	eventTime:       "10:00",
 	eventDuration:   30,
 	timezones:       defaultTimezones(),
@@ -245,6 +247,8 @@ func applySetting(s *appSettings, key, val string) {
 		if v := strings.ToLower(val); v == "day" || v == "week" || v == "month" {
 			s.defaultStep = v
 		}
+	case "timeline":
+		s.timeline = parseBool(val, s.timeline)
 	case "default_event_time", "event_time":
 		if isHHMM(val) {
 			s.eventTime = val
@@ -364,6 +368,8 @@ func defaultConfigText() string {
 	fmt.Fprintf(&b, "default_calendar = %s\n", settings.defaultCalendar)
 	b.WriteString("# default_step: list-view h/l movement — day | week | month.\n")
 	fmt.Fprintf(&b, "default_step     = %s\n", settings.defaultStep)
+	b.WriteString("# timeline: list-view 24h overlap bars + per-day density ruler (t toggles).\n")
+	fmt.Fprintf(&b, "timeline         = %t\n", settings.timeline)
 	b.WriteString("\n")
 	b.WriteString("# New-event defaults.\n")
 	fmt.Fprintf(&b, "event_time       = %s   # default start time (HH:MM)\n", settings.eventTime)

@@ -229,6 +229,11 @@ type model struct {
 	// yankPending means `y` was pressed and the next key chooses which event
 	// field is copied. It is a prefix, not a modal overlay.
 	yankPending bool
+	// timelineHidden turns OFF the per-row 24h timeline bars and the per-day
+	// density ruler in the list agenda (`t` toggles). Overlap is the whole point
+	// of a maintenance-window calendar, so the zero value -- and the default --
+	// is to SHOW them; narrow panes drop them automatically regardless.
+	timelineHidden bool
 }
 
 // createState holds the step-by-step new-event form.
@@ -483,15 +488,16 @@ func main() {
 	}
 
 	m := model{
-		calendarKey: calendar,
-		calendar:    resolveCalendar(calendar),
-		view:        viewList,
-		jumpUnit:    settings.defaultStep,
-		anchor:      anchor,
-		loading:     true,
-		status:      "loading~",
-		nextReqID:   1,
-		inflightReq: 1,
+		calendarKey:    calendar,
+		calendar:       resolveCalendar(calendar),
+		view:           viewList,
+		jumpUnit:       settings.defaultStep,
+		timelineHidden: !settings.timeline,
+		anchor:         anchor,
+		loading:        true,
+		status:         "loading~",
+		nextReqID:      1,
+		inflightReq:    1,
 	}
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
 		fatalf("%v", err)
@@ -740,7 +746,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(matches) > 0 {
 				idx := matches[max(0, min(m.searchIndex, len(matches)-1))].eventIndex
 				m.selected = idx
-				m.anchor = m.events[idx].StartDate
+				m.anchor = m.viewDate(&m.events[idx])
 				if m.view != viewList {
 					m.focusPane = focusMain
 					m.gridDetail = 0
@@ -1075,6 +1081,21 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.yankPending = true
 		m.status = yankHint
+	case "t":
+		// The timeline is the only thing on the row that costs horizontal
+		// space, so it has to be switchable off when a long title matters more
+		// than the overlap picture.
+		m.timelineHidden = !m.timelineHidden
+		switch {
+		case m.timelineHidden:
+			m.status = "timeline off (t shows the overlap bars again)"
+		case m.view != viewList:
+			m.status = "timeline on — it draws in the list view (g)"
+		case timelineCols(max(20, m.schedulePaneWidth()-1)) == 0:
+			m.status = "timeline on — but this pane is too narrow to draw it"
+		default:
+			m.status = "timeline on: bars share a 00-24h axis, the ruler shades how many run at once"
+		}
 	case "?":
 		m.mode = modeHelp
 	}
@@ -1209,13 +1230,13 @@ func (m *model) keepGridStable() bool {
 // the header date reflects what's highlighted.
 func (m *model) syncAnchorToSelected() {
 	if ev := m.selectedEvent(); ev != nil {
-		m.anchor = ev.StartDate
+		m.anchor = m.viewDate(ev)
 	}
 }
 
 func (m model) firstEventIndexOnOrAfter(day time.Time) int {
 	for i := range m.events {
-		if !m.events[i].StartDate.Before(day) {
+		if !m.viewDate(&m.events[i]).Before(day) {
 			return i
 		}
 	}
@@ -1808,6 +1829,18 @@ func fitPane(s string, width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
+// schedulePaneWidth is the width the list agenda actually gets, after the
+// detail pane takes its share. The `t` toggle reports whether a timeline fits,
+// so it has to ask about the same width the renderer will use.
+func (m model) schedulePaneWidth() int {
+	bodyWidth := max(20, m.width-2)
+	if m.splitMode() == splitRight {
+		rightW := max(34, bodyWidth/3)
+		return max(30, bodyWidth-rightW-1)
+	}
+	return bodyWidth
+}
+
 func (m model) View() string {
 	if m.width <= 0 {
 		return "loading~"
@@ -1860,7 +1893,7 @@ func (m model) View() string {
 		switch m.splitMode() {
 		case splitRight:
 			rightW := max(34, bodyWidth/3)
-			leftW := max(30, bodyWidth-rightW-1)
+			leftW := m.schedulePaneWidth()
 			left := fitPane(schedule(leftW, scheduleHeight), leftW, scheduleHeight)
 			right := fitPane(m.viewDetailCard(rightW, scheduleHeight), rightW, scheduleHeight)
 			body = lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
@@ -2042,7 +2075,7 @@ func (m model) shortcutHint() string {
 		if m.view != viewList {
 			return " h/l +/-day | j/k +/-week | g->list | M month-grid | n now | " + act + " | e calendar | A attendees | L links | y copy | E edit | X del | N new | Z tz | / | ? | q "
 		}
-		return " h/l move(step) | d/w/m step | j/k select | n now | " + act + " | e calendar | g grid | N new | E edit | X del | y copy | )( ±15m | }{ resize | >< ±day → s saves | D dup | u undo | ↵ open | / | ? | q "
+		return " h/l move(step) | d/w/m step | j/k select | n now | t timeline | " + act + " | e calendar | g grid | N new | E edit | X del | y copy | )( ±15m | }{ resize | >< ±day → s saves | D dup | u undo | ↵ open | / | ? | q "
 	case modeCreate:
 		return " new/edit event  |  type to edit  |  Enter save  |  Tab/S-Tab field  |  ESC back  |  Space toggle attendee "
 	case modeConfirmDelete:
@@ -2099,7 +2132,7 @@ func (m model) viewGrid(width, height int) string {
 	// events grouped by day
 	byDay := map[string][]*Event{}
 	for i := range m.events {
-		k := m.events[i].StartDate.Format("2006-01-02")
+		k := dayKey(m.viewDate(&m.events[i]))
 		byDay[k] = append(byDay[k], &m.events[i])
 	}
 
@@ -2235,6 +2268,18 @@ func (m model) viewAgendaCards(width, height int) string {
 	}
 	var lines []string
 	innerWidth := max(20, width-1)
+	// The mini timeline only appears when the pane can spare the columns; below
+	// that the agenda falls back to exactly what it rendered before.
+	cols := 0
+	var buckets map[string][]*Event
+	peak := 0
+	if !m.timelineHidden {
+		cols = timelineCols(innerWidth)
+		if cols > 0 {
+			buckets = m.dayBuckets()
+			peak = m.timelinePeak(buckets, cols)
+		}
+	}
 	start := m.agendaStartIndex(height)
 	current := ""
 	selected := m.selectedEvent()
@@ -2260,6 +2305,7 @@ func (m model) viewAgendaCards(width, height int) string {
 	// future. If the first visible event is already upcoming (we scrolled past
 	// "now") or every event is in the past, we don't draw a floating divider.
 	prevPast := false
+	dayStart := time.Time{}
 	for i := start; i < len(m.events); i++ {
 		ev := &m.events[i]
 		if !nowShown && prevPast && !eventSortInstant(ev).Before(now) {
@@ -2269,22 +2315,35 @@ func (m model) viewAgendaCards(width, height int) string {
 			lines = append(lines, nowLine())
 			nowShown = true
 		}
-		day := ev.StartDate.Format("Mon Jan 02")
+		// Rows group by the day the event falls on IN THE DISPLAY TIMEZONE, so
+		// the header, the clock label and the timeline axis always name the
+		// same day (see viewDate).
+		evDay := m.viewDate(ev)
+		day := evDay.Format("Mon Jan 02")
 		if day != current {
 			current = day
+			dayStart = m.viewDayStart(evDay)
 			if truncated() {
 				break
 			}
 			hdr := " " + day
-			if sameDay(ev.StartDate, now) {
+			if sameDay(evDay, m.viewToday()) {
 				hdr = " * " + day + "  (today)"
 			}
 			lines = append(lines, dayHeaderStyle.Render(hdr))
+			// The density ruler belongs directly under its date header: it is
+			// the axis every bar below it is read against.
+			if cols > 0 {
+				if truncated() {
+					break
+				}
+				lines = append(lines, m.timelineRuler(evDay, buckets[dayKey(evDay)], innerWidth, cols, peak))
+			}
 		}
 		if truncated() {
 			break
 		}
-		lines = append(lines, m.eventRow(ev, selected == ev, innerWidth))
+		lines = append(lines, m.eventRow(ev, selected == ev, innerWidth, dayStart, cols))
 		prevPast = eventSortInstant(ev).Before(now)
 	}
 	return strings.Join(lines, "\n")
@@ -2315,9 +2374,12 @@ func locationWithoutRooms(ev *Event) string {
 	return strings.Join(kept, ", ")
 }
 
-// eventRow is a single compact line: [time] title  badges. The time is a filled
-// pill so consecutive events are visually separated even without blank lines.
-func (m model) eventRow(ev *Event, selected bool, width int) string {
+// eventRow is a single compact line: [time] title  badges  [24h timeline]. The
+// time is a filled pill so consecutive events are visually separated even
+// without blank lines. When cols > 0 the row ends with a mini timeline bar
+// drawn on a shared 00:00-24:00 axis for dayStart, so overlapping events line
+// up vertically and the concurrency is readable at a glance.
+func (m model) eventRow(ev *Event, selected bool, width int, dayStart time.Time, cols int) string {
 	// A staged change shows the time it WOULD have, marked so it never passes
 	// for a saved one.
 	pending := m.pendingFor(ev)
@@ -2345,19 +2407,36 @@ func (m model) eventRow(ev *Event, selected bool, width int) string {
 	if ev.otherLinkCount() > 0 {
 		badges += " >"
 	}
-	titleRoom := max(6, width-lipgloss.Width(tl)-lipgloss.Width(badges)-4)
+	// The timeline is a styled trailing segment, so the text part has to be
+	// padded to an exact width or the bars of different rows won't align.
+	bar := ""
+	textW := width
+	if cols > 0 {
+		bar = m.timelineBar(ev, dayStart, cols, selected)
+		// timelineCols only returns a non-zero width when this subtraction
+		// still leaves timelineReserve cells for the text, so no clamp here.
+		textW = width - cols - 1
+	}
+	titleRoom := max(6, textW-lipgloss.Width(tl)-lipgloss.Width(badges)-4)
 	title := truncate(ev.Title, titleRoom)
-	if selected {
-		line := fmt.Sprintf("▸ %s %s%s", tl, title, badges)
-		if pending != nil {
-			return pendingStyle.Render(line)
-		}
-		return selectedRowStyle.Render(line)
+	// text is the styled left part; it is padded and the bar appended after,
+	// because embedding the bar inside a single Render would inject the row
+	// style's reset into the middle of the bar's own escape sequences.
+	var text string
+	switch {
+	case selected && pending != nil:
+		text = pendingStyle.Render(fmt.Sprintf("▸ %s %s%s", tl, title, badges))
+	case selected:
+		text = selectedRowStyle.Render(fmt.Sprintf("▸ %s %s%s", tl, title, badges))
+	case pending != nil:
+		text = "  " + pendingStyle.Render(tl+" "+title+badges)
+	default:
+		text = "  " + timePillMini.Render(tl) + " " + title + mutedStyle.Render(badges)
 	}
-	if pending != nil {
-		return "  " + pendingStyle.Render(tl+" "+title+badges)
+	if bar == "" {
+		return text
 	}
-	return "  " + timePillMini.Render(tl) + " " + title + mutedStyle.Render(badges)
+	return padRightW(text, textW) + " " + bar
 }
 
 func (m model) agendaStartIndex(height int) int {
@@ -2365,16 +2444,23 @@ func (m model) agendaStartIndex(height int) int {
 		return 0
 	}
 	selected := max(0, min(m.selected, len(m.events)-1))
-	// Each event = 1 row; count day headers too. Keep selected around the
-	// upper-middle so there's context above and room below.
+	// Each event = 1 row; a day boundary costs a header, plus the density ruler
+	// when the timeline is drawn. Miscounting the header cost pushes the
+	// selection off its intended position as days scroll past.
+	headerCost := 1
+	if !m.timelineHidden && timelineCols(max(20, m.schedulePaneWidth()-1)) > 0 {
+		headerCost = 2
+	}
+	// Keep selected around the upper-middle so there's context above and room
+	// below.
 	budgetAbove := max(2, height/3)
 	used := 0
 	start := selected
 	for start > 0 {
 		prev := start - 1
 		cost := 1
-		if prev == 0 || !sameDay(m.events[prev-1].StartDate, m.events[prev].StartDate) {
-			cost++ // day header
+		if prev == 0 || !sameDay(m.viewDate(&m.events[prev-1]), m.viewDate(&m.events[prev])) {
+			cost += headerCost
 		}
 		if used+cost > budgetAbove {
 			break
@@ -2452,7 +2538,7 @@ func (m model) viewDetailCard(width, height int) string {
 	var lines []string
 	lines = append(lines, sectionTitleStyle.Render(truncate("  "+ev.Title+"  ", max(10, width-4))))
 	lines = append(lines, "")
-	lines = append(lines, pillStyle.Render(ev.StartDate.Format("Mon Jan 02"))+" "+pillStyle.Render(m.timeLabel(ev)))
+	lines = append(lines, pillStyle.Render(m.viewDate(ev).Format("Mon Jan 02"))+" "+pillStyle.Render(m.timeLabel(ev)))
 	// A staged change spells out saved → staged in full here, since the row can
 	// only fit the delta. Pre-truncated to the card's content width (padding is
 	// 3 cells) so lipgloss never re-wraps and pushes the card past `height`; the
@@ -2535,7 +2621,9 @@ func (m model) searchMatches() []searchMatch {
 		}
 	}
 	matches := make([]searchMatch, 0, len(m.events))
-	for i, ev := range m.events {
+	for i := range m.events {
+		ev := &m.events[i]
+		vd := m.viewDate(ev)
 		if onlyMine {
 			me := myIdentity()
 			mine := me != "" && (strings.Contains(strings.ToLower(ev.Calendar), me) ||
@@ -2546,10 +2634,10 @@ func (m model) searchMatches() []searchMatch {
 			}
 		}
 		corpus := strings.ToLower(strings.Join([]string{
-			ev.StartDate.Format("2006-01-02"),
-			ev.StartDate.Format("Jan 02"),
-			ev.StartDate.Format("Mon"),
-			ev.TimeLabel(),
+			vd.Format("2006-01-02"),
+			vd.Format("Jan 02"),
+			vd.Format("Mon"),
+			m.timeLabel(ev),
 			ev.Title,
 			ev.Location,
 			strings.Join(ev.Rooms, " "),
@@ -2561,7 +2649,7 @@ func (m model) searchMatches() []searchMatch {
 		}, " "))
 		score := fuzzyScore(query, corpus)
 		if query == "" || score > 0 {
-			label := fmt.Sprintf("%s %-13s %s", ev.StartDate.Format("01/02 Mon"), ev.TimeLabel(), ev.Title)
+			label := fmt.Sprintf("%s %-13s %s", vd.Format("01/02 Mon"), m.timeLabel(ev), ev.Title)
 			if ev.Location != "" {
 				label += " @ " + ev.Location
 			}
@@ -2816,7 +2904,7 @@ func (m model) viewConfirmDelete() string {
 	lines = append(lines, "")
 	if ev != nil {
 		lines = append(lines, pillStyle.Render(m.timeLabel(ev))+" "+truncate(ev.Title, max(10, w-16)))
-		lines = append(lines, mutedStyle.Render(ev.StartDate.Format("Mon Jan 02")+" | "+m.calendarDisplayName()))
+		lines = append(lines, mutedStyle.Render(m.viewDate(ev).Format("Mon Jan 02")+" | "+m.calendarDisplayName()))
 		if n := len(ev.Attendees); n > 0 {
 			lines = append(lines, errorStyle.Render(fmt.Sprintf("⚠ cancellation notice will be sent to %d people", n)))
 		}
@@ -3088,7 +3176,7 @@ func (m model) selectedEvent() *Event {
 	// on the focused day (so A/L/E/x/detail act on that day).
 	if m.view != viewList {
 		for i := range m.events {
-			if sameDay(m.events[i].StartDate, m.anchor) {
+			if sameDay(m.viewDate(&m.events[i]), m.anchor) {
 				return &m.events[i]
 			}
 		}
@@ -3102,7 +3190,7 @@ func (m model) selectedEvent() *Event {
 func (m model) focusDayEvents() []*Event {
 	var out []*Event
 	for i := range m.events {
-		if sameDay(m.events[i].StartDate, m.anchor) {
+		if sameDay(m.viewDate(&m.events[i]), m.anchor) {
 			out = append(out, &m.events[i])
 		}
 	}
@@ -3207,13 +3295,21 @@ func fetchEvents(calendar string, start, end time.Time) ([]Event, error) {
 	return fetchEventsGcalcli(calendar, start, end)
 }
 
+// sortEvents orders the agenda chronologically. It sorts on the ABSOLUTE
+// instant (eventSortInstant) rather than the local date/clock columns, so the
+// order is a property of the events themselves and does not depend on which
+// timezone the view happens to be displaying. All-day events sort at their
+// day's local midnight, keeping them at the head of their day.
 func sortEvents(events []Event) {
 	sort.Slice(events, func(i, j int) bool {
-		if !events[i].StartDate.Equal(events[j].StartDate) {
-			return events[i].StartDate.Before(events[j].StartDate)
+		si, sj := eventSortInstant(&events[i]), eventSortInstant(&events[j])
+		if !si.Equal(sj) {
+			return si.Before(sj)
 		}
-		if events[i].StartTime != events[j].StartTime {
-			return events[i].StartTime < events[j].StartTime
+		// All-day events come before timed ones starting at the same instant:
+		// the day-long context reads first.
+		if events[i].AllDay() != events[j].AllDay() {
+			return events[i].AllDay()
 		}
 		return events[i].Title < events[j].Title
 	})
@@ -3313,15 +3409,7 @@ func fetchEventsGcalcli(calendar string, start, end time.Time) ([]Event, error) 
 			}
 		}
 	}
-	sort.Slice(events, func(i, j int) bool {
-		if !events[i].StartDate.Equal(events[j].StartDate) {
-			return events[i].StartDate.Before(events[j].StartDate)
-		}
-		if events[i].StartTime != events[j].StartTime {
-			return events[i].StartTime < events[j].StartTime
-		}
-		return events[i].Title < events[j].Title
-	})
+	sortEvents(events)
 	return events, nil
 }
 
@@ -3595,8 +3683,15 @@ func helpLines() []string {
 		"List    h/l move by step | d/w/m set step (day/week/month) | j/k select",
 		"Grid    h/l +/-day | j/k +/-week | focus cursor only; calendar stays put",
 		"        detail pane splits right (wide) or bottom (tall); A/L/E/X act on focus day",
-		"a       ACTIVE NOW panel: every event in effect at this moment, soonest-",
-		"        ending first. Multi-day windows (maintenance, on-call, PTO) show",
+		"t       TIMELINE (list view): every row gets a 00-24h bar on one shared",
+		"        axis, so events that overlap line up vertically — the thing a flat",
+		"        agenda cannot show. Under each date header a ruler shades how many",
+		"        events run at each hour (grey=light, amber/red=stacked, scaled",
+		"        across all loaded days) and prints that day's peak count.",
+		"        `|` = right now · `<`/`>` = the window continues past midnight.",
+		"        Bars follow the row: blue when active now, amber when unsaved.",
+		"        t hides it when a long title needs the width back.",
+		"a       ACTIVE NOW panel: every event in effect at this moment, soonest-", "        ending first. Multi-day windows (maintenance, on-call, PTO) show",
 		"        up here even when the agenda has scrolled them out of sight.",
 		"        `a` only TOGGLES the panel — it never moves your cursor, and the",
 		"        schedule keeps taking every key while the panel sits above it.",
@@ -3677,6 +3772,10 @@ func wrap(s string, width int) string {
 	return strings.Join(textwrap(s, width), "\n")
 }
 
+// textwrap hard-wraps s to `width` display cells per line. It must cut with the
+// ANSI-aware slicer: a byte-wise cut lands inside an escape sequence and spills
+// the raw `\x1b[...m` bytes into the frame — a styled 40-cell line then measures
+// 120 columns and shoves the layout sideways.
 func textwrap(s string, width int) []string {
 	if width <= 0 {
 		return []string{s}
@@ -3684,9 +3783,8 @@ func textwrap(s string, width int) []string {
 	var lines []string
 	for _, para := range strings.Split(s, "\n") {
 		for lipgloss.Width(para) > width {
-			cut := min(len(para), width)
-			lines = append(lines, para[:cut])
-			para = para[cut:]
+			lines = append(lines, ansi.Truncate(para, width, ""))
+			para = ansi.TruncateLeft(para, width, "")
 		}
 		lines = append(lines, para)
 	}
