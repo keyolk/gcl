@@ -350,6 +350,146 @@ func TestAllDayEventsFillTheirWholeSpan(t *testing.T) {
 	}
 }
 
+// withTimezones swaps the package-global Z-cycle list for one test. settings is
+// a global, so leaving it mutated would poison unrelated tests.
+func withTimezones(t *testing.T, tzs ...tzOption) {
+	t.Helper()
+	saved := settings.timezones
+	t.Cleanup(func() { settings.timezones = saved })
+	settings.timezones = tzs
+}
+
+// kstEvent builds an event the way the API delivers one: absolute instants in
+// its own zone, with StartDate/StartTime derived in time.Local (KST here).
+func kstEvent(t *testing.T, id string, startDay, sh, sm, endDay, eh, em int) Event {
+	t.Helper()
+	kst, err := time.LoadLocation("Asia/Seoul")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	s := time.Date(2026, 8, startDay, sh, sm, 0, 0, kst)
+	e := time.Date(2026, 8, endDay, eh, em, 0, 0, kst)
+	return Event{
+		ID: id, Title: id,
+		StartDate: time.Date(2026, 8, startDay, 0, 0, 0, 0, time.Local),
+		EndDate:   time.Date(2026, 8, endDay, 0, 0, 0, 0, time.Local),
+		StartTime: s.Format("15:04"), EndTime: e.Format("15:04"),
+		StartAt: s, EndAt: e,
+	}
+}
+
+// Switching the display timezone with Z has to move the day GROUPING too, not
+// just the clock label. Grouping by the fetch-time local date while labelling
+// in the display tz put a row reading "18:30-01:30" under a header a day ahead
+// of when it starts, and anchored the timeline axis five hours after the event
+// began — so every overnight window collapsed into a stub at column 0.
+func TestDisplayTimezoneRegroupsDaysAndAxis(t *testing.T) {
+	withTimezones(t,
+		tzOption{label: "KST", zone: "Asia/Seoul"},
+		tzOption{label: "UTC", zone: "UTC"},
+	)
+	// 03:30-10:30 KST is 18:30-01:30 UTC on the PREVIOUS day.
+	morning := kstEvent(t, "dream11", 4, 3, 30, 4, 10, 30)
+	// 21:00-04:30 KST is 12:00-19:30 UTC, entirely inside its UTC day.
+	overnight := kstEvent(t, "ap9", 4, 21, 0, 5, 4, 30)
+
+	cases := []struct {
+		tz      int
+		label   string
+		day     string
+		barCols [2]int // expected first/last bar column on a 24-column axis
+	}{
+		{0, "03:30-10:30", "Aug 04", [2]int{3, 10}},
+		{1, "18:30-01:30", "Aug 03", [2]int{18, 23}},
+	}
+	for _, tc := range cases {
+		m := timelineModel(160, morning, overnight)
+		m.tzIndex = tc.tz
+		ev := &m.events[0]
+		if ev.ID != "dream11" {
+			ev = &m.events[1]
+		}
+		if got := m.timeLabel(ev); got != tc.label {
+			t.Errorf("tz=%s: label = %q, want %q", m.tzLabel(), got, tc.label)
+		}
+		vd := m.viewDate(ev)
+		if got := vd.Format("Jan 02"); got != tc.day {
+			t.Errorf("tz=%s: grouped under %s, want %s", m.tzLabel(), got, tc.day)
+		}
+		bar := barOf(m.timelineBar(ev, m.viewDayStart(vd), 24, false))
+		lo := strings.IndexAny(bar, "abcdefghijklmnop<>")
+		hi := strings.LastIndexAny(bar, "abcdefghijklmnop<>")
+		if lo != tc.barCols[0] || hi != tc.barCols[1] {
+			t.Errorf("tz=%s: bar spans [%d,%d], want %v — %q", m.tzLabel(), lo, hi, tc.barCols, bar)
+		}
+	}
+}
+
+// The agenda groups rows by display-tz day, so the header sequence itself has
+// to change when Z is pressed — the whole point of switching.
+func TestAgendaHeadersFollowDisplayTimezone(t *testing.T) {
+	withTimezones(t,
+		tzOption{label: "KST", zone: "Asia/Seoul"},
+		tzOption{label: "UTC", zone: "UTC"},
+	)
+	evs := []Event{
+		kstEvent(t, "dream11", 4, 3, 30, 4, 10, 30),
+		kstEvent(t, "schibsted", 4, 8, 30, 4, 14, 0),
+		kstEvent(t, "ap9", 4, 21, 0, 5, 4, 30),
+	}
+	headers := func(tzIndex int) []string {
+		m := timelineModel(160, evs...)
+		m.tzIndex = tzIndex
+		var out []string
+		for _, l := range strings.Split(stripANSI(m.viewAgendaCards(150, 20)), "\n") {
+			if strings.HasPrefix(l, " ") && strings.Contains(l, "Aug") && !strings.Contains(l, ":") {
+				out = append(out, strings.TrimSpace(l))
+			}
+		}
+		return out
+	}
+	// In KST all three sit on Aug 04.
+	if got := headers(0); len(got) != 1 || !strings.Contains(got[0], "Aug 04") {
+		t.Errorf("KST headers = %v, want just Aug 04", got)
+	}
+	// In UTC the two morning windows move back a day; only ap9 stays on Aug 04.
+	got := headers(1)
+	if len(got) != 2 || !strings.Contains(got[0], "Aug 03") || !strings.Contains(got[1], "Aug 04") {
+		t.Errorf("UTC headers = %v, want Aug 03 then Aug 04", got)
+	}
+}
+
+// Sorting must be a property of the events, not of the view: pressing Z may
+// regroup days but must never reshuffle the chronological order.
+func TestSortOrderIsTimezoneIndependent(t *testing.T) {
+	withTimezones(t,
+		tzOption{label: "KST", zone: "Asia/Seoul"},
+		tzOption{label: "UTC", zone: "UTC"},
+	)
+	evs := []Event{
+		kstEvent(t, "c", 4, 21, 0, 5, 4, 30),
+		kstEvent(t, "a", 4, 3, 30, 4, 10, 30),
+		kstEvent(t, "b", 4, 8, 30, 4, 14, 0),
+	}
+	var first []string
+	for _, tzIndex := range []int{0, 1} {
+		m := timelineModel(160, evs...)
+		m.tzIndex = tzIndex
+		var ids []string
+		for i := range m.events {
+			ids = append(ids, m.events[i].ID)
+		}
+		if want := []string{"a", "b", "c"}; strings.Join(ids, ",") != strings.Join(want, ",") {
+			t.Errorf("tz index %d: order = %v, want %v", tzIndex, ids, want)
+		}
+		if first == nil {
+			first = ids
+		} else if strings.Join(ids, ",") != strings.Join(first, ",") {
+			t.Errorf("switching timezone reshuffled the agenda: %v vs %v", first, ids)
+		}
+	}
+}
+
 // The density ramp is relative to the busiest column on screen, so a day that
 // stacks 9 windows has to shade differently from one that has 1.
 func TestDensityDistinguishesQuietAndStackedHours(t *testing.T) {

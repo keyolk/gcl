@@ -56,12 +56,60 @@ func timelineCols(width int) int {
 	}
 }
 
-// dayStartIn returns midnight of day's calendar date in loc. The agenda groups
-// rows under a date header, and the timeline axis has to be anchored to that
-// same date rather than to the event's own instant.
+// dayStartIn returns midnight of day's calendar date in loc.
 func dayStartIn(day time.Time, loc *time.Location) time.Time {
 	y, mo, d := day.Date()
 	return time.Date(y, mo, d, 0, 0, 0, 0, loc)
+}
+
+// viewDate is the calendar DAY an event belongs to when read in the currently
+// selected display timezone, returned as a local-midnight token.
+//
+// Two coordinate systems meet here and the distinction is the whole reason this
+// function exists:
+//
+//   - Event.StartDate is a *local-timezone* calendar date, derived once at fetch
+//     time. It never moves.
+//   - Z switches the display timezone, which changes both the clock label AND
+//     which calendar day an instant falls on: a KST 03:30 event is 18:30 on the
+//     PREVIOUS day in UTC.
+//
+// Grouping by StartDate while labelling in the display tz made the two
+// disagree — a row reading "18:30-01:30" sat under a header a day ahead of the
+// day it actually starts, and the timeline axis (anchored on that header's
+// date) started five hours after the event did, so every overnight window
+// collapsed into a clipped stub at column 0.
+//
+// The returned time is normalized back to LOCAL midnight so it stays
+// interchangeable with anchor/gridTop/weekStart, which are local-midnight day
+// tokens throughout. Only the day IDENTITY comes from the display tz; the
+// value is still just "a day".
+func (m model) viewDate(ev *Event) time.Time {
+	loc := m.tz()
+	inst, _ := m.rowSpan(ev)
+	if ev.AllDay() || inst.IsZero() {
+		// All-day events carry a date, not an instant: they are the same
+		// calendar day in every timezone, so no conversion applies.
+		return dayStartIn(ev.StartDate, time.Local)
+	}
+	y, mo, d := inst.In(loc).Date()
+	return time.Date(y, mo, d, 0, 0, 0, 0, time.Local)
+}
+
+// viewDayStart is the absolute instant a day's timeline axis begins: midnight
+// of that day IN THE DISPLAY TIMEZONE. Pairs with viewDate — the axis has to be
+// anchored in the same coordinate system the day was grouped in, or bars land
+// off it.
+func (m model) viewDayStart(day time.Time) time.Time {
+	return dayStartIn(day, m.tz())
+}
+
+// viewToday is today's day token in the display timezone. Late at night in KST
+// it is still "yesterday" in UTC, and the agenda's `(today)` star has to follow
+// whichever day the rows are actually grouped under.
+func (m model) viewToday() time.Time {
+	now := time.Now().In(m.tz())
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
 }
 
 // timelineSpan maps [start, end) onto column indices of a cols-wide axis
@@ -295,40 +343,27 @@ func (m model) timelineBar(ev *Event, dayStart time.Time, cols int, selected boo
 }
 
 // dayBuckets groups every loaded event under each calendar day it TOUCHES, not
-// just the day it starts on. The agenda lists a window under its start date,
-// but a 21:00-04:30 window is genuinely running through the next morning and
-// has to count toward that morning's density or the ruler understates the load.
+// just the day it starts on. The agenda lists a window under its start day, but
+// a 21:00-04:30 window is genuinely running through the next morning and has to
+// count toward that morning's density or the ruler understates the load.
 //
-// Days are keyed exactly the way the agenda groups its rows (the event's
-// StartDate, read as a date and re-anchored in the display timezone), so a
-// bucket and the axis the ruler draws it on can never disagree — including
-// after Z switches the timezone.
+// Days are keyed by viewDate — the same day identity the agenda groups its rows
+// under — so a bucket and the axis the ruler draws it on cannot disagree, in
+// any display timezone.
 //
 // The per-event day count is capped: a year-long all-day event would otherwise
 // fan out into 365 buckets for no readable gain.
 func (m model) dayBuckets() map[string][]*Event {
 	const maxDaysPerEvent = 14
-	loc := m.tz()
 	out := map[string][]*Event{}
 	for i := range m.events {
 		ev := &m.events[i]
-		start, end := m.rowSpan(ev)
-		if start.IsZero() {
-			continue
-		}
-		day := dayStartIn(ev.StartDate, loc)
+		_, end := m.rowSpan(ev)
+		day := m.viewDate(ev)
 		for n := 0; n < maxDaysPerEvent; n++ {
-			next := day.AddDate(0, 0, 1)
-			if !start.Before(next) {
-				// Reading the event in another timezone can push it past its
-				// own StartDate; keep walking forward to find the day it
-				// actually falls on rather than bucketing it wrongly.
-				day = next
-				continue
-			}
 			out[dayKey(day)] = append(out[dayKey(day)], ev)
-			day = next
-			if !end.After(day) {
+			day = day.AddDate(0, 0, 1)
+			if end.IsZero() || !end.After(m.viewDayStart(day)) {
 				break
 			}
 		}
@@ -336,14 +371,14 @@ func (m model) dayBuckets() map[string][]*Event {
 	return out
 }
 
-// dayKey is the bucket key for a day's midnight instant.
-func dayKey(dayStart time.Time) string { return dayStart.Format("2006-01-02") }
+// dayKey is the bucket key for a day token.
+func dayKey(day time.Time) string { return day.Format("2006-01-02") }
 
 // timelineRuler is the per-day header line under the date: an hour ruler whose
 // background encodes how many events overlap at each column. This is the line
 // that answers "how stacked is this day, and when" at a glance.
 func (m model) timelineRuler(day time.Time, evs []*Event, width, cols int, peak int) string {
-	dayStart := dayStartIn(day, m.tz())
+	dayStart := m.viewDayStart(day)
 	density := m.timelineDensity(evs, dayStart, cols)
 	dayPeak := 0
 	for _, n := range density {
@@ -391,14 +426,13 @@ func (m model) timelinePeak(buckets map[string][]*Event, cols int) int {
 	if cols <= 0 {
 		return 0
 	}
-	loc := m.tz()
 	peak := 0
 	for key, evs := range buckets {
-		day, err := time.ParseInLocation("2006-01-02", key, loc)
+		day, err := time.ParseInLocation("2006-01-02", key, time.Local)
 		if err != nil {
 			continue
 		}
-		for _, n := range m.timelineDensity(evs, day, cols) {
+		for _, n := range m.timelineDensity(evs, m.viewDayStart(day), cols) {
 			if n > peak {
 				peak = n
 			}

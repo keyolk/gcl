@@ -746,7 +746,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(matches) > 0 {
 				idx := matches[max(0, min(m.searchIndex, len(matches)-1))].eventIndex
 				m.selected = idx
-				m.anchor = m.events[idx].StartDate
+				m.anchor = m.viewDate(&m.events[idx])
 				if m.view != viewList {
 					m.focusPane = focusMain
 					m.gridDetail = 0
@@ -1230,13 +1230,13 @@ func (m *model) keepGridStable() bool {
 // the header date reflects what's highlighted.
 func (m *model) syncAnchorToSelected() {
 	if ev := m.selectedEvent(); ev != nil {
-		m.anchor = ev.StartDate
+		m.anchor = m.viewDate(ev)
 	}
 }
 
 func (m model) firstEventIndexOnOrAfter(day time.Time) int {
 	for i := range m.events {
-		if !m.events[i].StartDate.Before(day) {
+		if !m.viewDate(&m.events[i]).Before(day) {
 			return i
 		}
 	}
@@ -2132,7 +2132,7 @@ func (m model) viewGrid(width, height int) string {
 	// events grouped by day
 	byDay := map[string][]*Event{}
 	for i := range m.events {
-		k := m.events[i].StartDate.Format("2006-01-02")
+		k := dayKey(m.viewDate(&m.events[i]))
 		byDay[k] = append(byDay[k], &m.events[i])
 	}
 
@@ -2315,15 +2315,19 @@ func (m model) viewAgendaCards(width, height int) string {
 			lines = append(lines, nowLine())
 			nowShown = true
 		}
-		day := ev.StartDate.Format("Mon Jan 02")
+		// Rows group by the day the event falls on IN THE DISPLAY TIMEZONE, so
+		// the header, the clock label and the timeline axis always name the
+		// same day (see viewDate).
+		evDay := m.viewDate(ev)
+		day := evDay.Format("Mon Jan 02")
 		if day != current {
 			current = day
-			dayStart = dayStartIn(ev.StartDate, m.tz())
+			dayStart = m.viewDayStart(evDay)
 			if truncated() {
 				break
 			}
 			hdr := " " + day
-			if sameDay(ev.StartDate, now) {
+			if sameDay(evDay, m.viewToday()) {
 				hdr = " * " + day + "  (today)"
 			}
 			lines = append(lines, dayHeaderStyle.Render(hdr))
@@ -2333,8 +2337,7 @@ func (m model) viewAgendaCards(width, height int) string {
 				if truncated() {
 					break
 				}
-				key := ev.StartDate.Format("2006-01-02")
-				lines = append(lines, m.timelineRuler(ev.StartDate, buckets[key], innerWidth, cols, peak))
+				lines = append(lines, m.timelineRuler(evDay, buckets[dayKey(evDay)], innerWidth, cols, peak))
 			}
 		}
 		if truncated() {
@@ -2456,7 +2459,7 @@ func (m model) agendaStartIndex(height int) int {
 	for start > 0 {
 		prev := start - 1
 		cost := 1
-		if prev == 0 || !sameDay(m.events[prev-1].StartDate, m.events[prev].StartDate) {
+		if prev == 0 || !sameDay(m.viewDate(&m.events[prev-1]), m.viewDate(&m.events[prev])) {
 			cost += headerCost
 		}
 		if used+cost > budgetAbove {
@@ -2535,7 +2538,7 @@ func (m model) viewDetailCard(width, height int) string {
 	var lines []string
 	lines = append(lines, sectionTitleStyle.Render(truncate("  "+ev.Title+"  ", max(10, width-4))))
 	lines = append(lines, "")
-	lines = append(lines, pillStyle.Render(ev.StartDate.Format("Mon Jan 02"))+" "+pillStyle.Render(m.timeLabel(ev)))
+	lines = append(lines, pillStyle.Render(m.viewDate(ev).Format("Mon Jan 02"))+" "+pillStyle.Render(m.timeLabel(ev)))
 	// A staged change spells out saved → staged in full here, since the row can
 	// only fit the delta. Pre-truncated to the card's content width (padding is
 	// 3 cells) so lipgloss never re-wraps and pushes the card past `height`; the
@@ -2618,7 +2621,9 @@ func (m model) searchMatches() []searchMatch {
 		}
 	}
 	matches := make([]searchMatch, 0, len(m.events))
-	for i, ev := range m.events {
+	for i := range m.events {
+		ev := &m.events[i]
+		vd := m.viewDate(ev)
 		if onlyMine {
 			me := myIdentity()
 			mine := me != "" && (strings.Contains(strings.ToLower(ev.Calendar), me) ||
@@ -2629,10 +2634,10 @@ func (m model) searchMatches() []searchMatch {
 			}
 		}
 		corpus := strings.ToLower(strings.Join([]string{
-			ev.StartDate.Format("2006-01-02"),
-			ev.StartDate.Format("Jan 02"),
-			ev.StartDate.Format("Mon"),
-			ev.TimeLabel(),
+			vd.Format("2006-01-02"),
+			vd.Format("Jan 02"),
+			vd.Format("Mon"),
+			m.timeLabel(ev),
 			ev.Title,
 			ev.Location,
 			strings.Join(ev.Rooms, " "),
@@ -2644,7 +2649,7 @@ func (m model) searchMatches() []searchMatch {
 		}, " "))
 		score := fuzzyScore(query, corpus)
 		if query == "" || score > 0 {
-			label := fmt.Sprintf("%s %-13s %s", ev.StartDate.Format("01/02 Mon"), ev.TimeLabel(), ev.Title)
+			label := fmt.Sprintf("%s %-13s %s", vd.Format("01/02 Mon"), m.timeLabel(ev), ev.Title)
 			if ev.Location != "" {
 				label += " @ " + ev.Location
 			}
@@ -2899,7 +2904,7 @@ func (m model) viewConfirmDelete() string {
 	lines = append(lines, "")
 	if ev != nil {
 		lines = append(lines, pillStyle.Render(m.timeLabel(ev))+" "+truncate(ev.Title, max(10, w-16)))
-		lines = append(lines, mutedStyle.Render(ev.StartDate.Format("Mon Jan 02")+" | "+m.calendarDisplayName()))
+		lines = append(lines, mutedStyle.Render(m.viewDate(ev).Format("Mon Jan 02")+" | "+m.calendarDisplayName()))
 		if n := len(ev.Attendees); n > 0 {
 			lines = append(lines, errorStyle.Render(fmt.Sprintf("⚠ cancellation notice will be sent to %d people", n)))
 		}
@@ -3171,7 +3176,7 @@ func (m model) selectedEvent() *Event {
 	// on the focused day (so A/L/E/x/detail act on that day).
 	if m.view != viewList {
 		for i := range m.events {
-			if sameDay(m.events[i].StartDate, m.anchor) {
+			if sameDay(m.viewDate(&m.events[i]), m.anchor) {
 				return &m.events[i]
 			}
 		}
@@ -3185,7 +3190,7 @@ func (m model) selectedEvent() *Event {
 func (m model) focusDayEvents() []*Event {
 	var out []*Event
 	for i := range m.events {
-		if sameDay(m.events[i].StartDate, m.anchor) {
+		if sameDay(m.viewDate(&m.events[i]), m.anchor) {
 			out = append(out, &m.events[i])
 		}
 	}
@@ -3290,13 +3295,21 @@ func fetchEvents(calendar string, start, end time.Time) ([]Event, error) {
 	return fetchEventsGcalcli(calendar, start, end)
 }
 
+// sortEvents orders the agenda chronologically. It sorts on the ABSOLUTE
+// instant (eventSortInstant) rather than the local date/clock columns, so the
+// order is a property of the events themselves and does not depend on which
+// timezone the view happens to be displaying. All-day events sort at their
+// day's local midnight, keeping them at the head of their day.
 func sortEvents(events []Event) {
 	sort.Slice(events, func(i, j int) bool {
-		if !events[i].StartDate.Equal(events[j].StartDate) {
-			return events[i].StartDate.Before(events[j].StartDate)
+		si, sj := eventSortInstant(&events[i]), eventSortInstant(&events[j])
+		if !si.Equal(sj) {
+			return si.Before(sj)
 		}
-		if events[i].StartTime != events[j].StartTime {
-			return events[i].StartTime < events[j].StartTime
+		// All-day events come before timed ones starting at the same instant:
+		// the day-long context reads first.
+		if events[i].AllDay() != events[j].AllDay() {
+			return events[i].AllDay()
 		}
 		return events[i].Title < events[j].Title
 	})
@@ -3396,15 +3409,7 @@ func fetchEventsGcalcli(calendar string, start, end time.Time) ([]Event, error) 
 			}
 		}
 	}
-	sort.Slice(events, func(i, j int) bool {
-		if !events[i].StartDate.Equal(events[j].StartDate) {
-			return events[i].StartDate.Before(events[j].StartDate)
-		}
-		if events[i].StartTime != events[j].StartTime {
-			return events[i].StartTime < events[j].StartTime
-		}
-		return events[i].Title < events[j].Title
-	})
+	sortEvents(events)
 	return events, nil
 }
 
