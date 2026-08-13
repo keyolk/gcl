@@ -39,11 +39,43 @@ OAuth credentials from `gcalcli` — and builds a richer interactive interface o
 ### Navigation
 
 - **List view** for dense agenda browsing
+- **24-hour overlap timeline** in the list view (`t`) — see below
 - **Week grid** view
 - **Month grid** view
 - Keyboard navigation for day/week movement
 - Focus follows selection in list view
 - Grid view keeps the calendar window stable while moving the cursor
+
+### Overlap timeline (`t`)
+
+A flat agenda tells you what exists but not what runs *at the same time* — the
+question a maintenance-window calendar is read for. Every list row gets a mini
+00:00–24:00 bar on one shared axis, so overlapping events line up vertically:
+
+```
+ * Thu Aug 13  (today)
+                        20 events · peak 9  0   3   6   9  12  15  18  21   <- density ruler
+   02:30-07:30 [ap3]       ███████
+   03:30-10:30 [dream11]     ██████████
+   03:30-08:00 [nexon]       ██████
+ ▸ 04:30-10:30 [ap5]          █████████                                     <- selected
+   15:30-23:00 [doordash]                        ███████████│               <- │ = now
+   21:00-04:30 [ap9]                                      ████>             <- past midnight
+```
+
+- The ruler under each date header shades **how many events run at once** in
+  each column (cool → hot), scaled against the busiest column across every
+  loaded day so the same color means the same load on every day on screen. The
+  left gutter prints that day's event count and peak concurrency.
+- `│` marks the current moment; `<` / `>` mark a window continuing past
+  midnight — a 21:00–04:30 window is counted in the next morning's density too.
+- Bars follow row state: blue while an event is active now, amber while a time
+  change is staged but unsaved.
+- Resolution adapts to pane width (1, 2, or 4 columns per hour). Panes too
+  narrow to carry a bar without crushing the title simply don't get one.
+- `t` toggles it; `timeline = false` in the config turns it off at startup.
+  Bars are drawn with background-colored spaces, never block glyphs, so
+  terminals that render box-drawing characters double-width stay aligned.
 
 ### Event details
 
@@ -133,6 +165,7 @@ oncall       = c_xxxxxxxxxxxxxxxxxxxxxxxxxxxx@group.calendar.google.com
 email            = you@example.com   # optional; auto-detected from primary calendar if blank
 default_calendar = me                # opened at startup (overridden by --calendar)
 default_step     = day               # list-view h/l step: day | week | month
+timeline         = true              # list-view 24h overlap bars + density ruler (t toggles)
 event_time       = 10:00             # new-event default start time
 event_duration   = 30                # new-event default duration (minutes)
 timezones        = local, KST=Asia/Seoul, UTC   # cycled with the Z key
@@ -337,6 +370,7 @@ Details:
 - `h` / `l` — move backward/forward by current step
 - `d` / `w` / `m` — set movement step to day/week/month
 - `j` / `k` — move event selection
+- `t` — toggle the 24h overlap timeline
 - `g` — switch to week grid
 - `M` — switch to month grid
 
@@ -501,6 +535,23 @@ make clean      # remove local build artifact
   there for the rarer case where you want to work through the list. Panel
   navigation keeps the schedule selection in sync rather than intercepting the
   action keys, so `E`/`X`/`L` need no panel-specific code path.
+
+- **The timeline transposes the calendar rather than reproducing it.** Google
+  Calendar shows overlap with vertical lanes, which cost `concurrent events ×
+  lane width` columns — 25 simultaneous maintenance windows fit in no terminal.
+  Rotating the time axis 90° keeps one row per event (so titles stay readable
+  and the existing agenda keys still work) while making overlap visible as
+  vertical alignment. The density ruler carries the number the bars can't: bars
+  show *when* things overlap, the ruler shows *how much*.
+- **The density ramp is relative, not absolute.** Scaling to the busiest column
+  across all loaded days keeps colors comparable between days on screen; the
+  per-day gutter prints the actual peak so the number is never lost. A ramp
+  normalized per day would make a quiet day look as busy as a stacked one.
+- **Nothing is drawn with block-drawing glyphs.** U+2580–259F are
+  East-Asian-ambiguous: some terminals render them two cells wide, which
+  desyncs the whole frame. Background-colored spaces are always exactly one
+  cell, so the bars stay aligned everywhere (this is the same constraint that
+  keeps `detailStyle` borderless).
 
 ## Limitations / future ideas
 

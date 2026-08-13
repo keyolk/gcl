@@ -94,7 +94,7 @@ func TestEventRowShowsStagedTimeWithMarker(t *testing.T) {
 			StartDate: start, StartTime: "10:00",
 		}},
 	}
-	saved := stripANSI(m.eventRow(&m.events[0], false, 80))
+	saved := stripANSI(m.eventRow(&m.events[0], false, 80, dayStartIn(start, m.tz()), 0))
 	if !strings.Contains(saved, "10:00-10:30") {
 		t.Fatalf("saved row = %q, want the saved time", saved)
 	}
@@ -104,7 +104,7 @@ func TestEventRowShowsStagedTimeWithMarker(t *testing.T) {
 
 	mm, _, _ := m.handleQuickAction(")")
 	m = mm.(model)
-	staged := stripANSI(m.eventRow(&m.events[0], false, 80))
+	staged := stripANSI(m.eventRow(&m.events[0], false, 80, dayStartIn(start, m.tz()), 0))
 	if !strings.Contains(staged, "10:15-10:45") {
 		t.Errorf("staged row = %q, want the staged time 10:15-10:45", staged)
 	}
