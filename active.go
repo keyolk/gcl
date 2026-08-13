@@ -28,12 +28,20 @@ import (
 // when it came from a source that did not supply one, so fall back to a
 // single-day span.
 func activeSpan(ev *Event) (start, end time.Time) {
-	if !ev.AllDay() && !ev.StartAt.IsZero() {
-		end = ev.EndAt
-		if end.IsZero() {
-			end = ev.StartAt
+	if !ev.AllDay() {
+		s, e := ev.StartAt, ev.EndAt
+		if s.IsZero() {
+			// Defensive: a timed event with no absolute instant must not fall
+			// through to the all-day branch below — that would stretch it across
+			// the whole day and report it active from midnight to midnight.
+			s, e = tsvInstants(ev)
 		}
-		return ev.StartAt, end
+		if !s.IsZero() {
+			if e.IsZero() {
+				e = s
+			}
+			return s, e
+		}
 	}
 	start = ev.StartDate
 	end = ev.EndDate
