@@ -277,7 +277,7 @@ func TestStagePendingRejectsAllDayAndZeroDuration(t *testing.T) {
 	m := model{calendar: "me"}
 	// All-day events have an empty StartTime.
 	allDay := &Event{ID: "x", Title: "Holiday"}
-	if got := m.stagePending(allDay, nudgeStep, nudgeStep); !strings.Contains(got, "all-day") {
+	if got := m.stagePending(allDay, nudgeStep, nudgeStep, 0); !strings.Contains(got, "all-day") {
 		t.Errorf("expected an all-day rejection, got %q", got)
 	}
 	if m.pending != nil {
@@ -287,7 +287,7 @@ func TestStagePendingRejectsAllDayAndZeroDuration(t *testing.T) {
 	// Shrinking a 15-minute event by 15 minutes would zero it out.
 	start := time.Date(2026, 7, 15, 10, 0, 0, 0, time.Local)
 	short := &Event{ID: "y", Title: "Quick", StartAt: start, EndAt: start.Add(nudgeStep), StartTime: "10:00"}
-	if got := m.stagePending(short, 0, -nudgeStep); !strings.Contains(got, "zero or negative") {
+	if got := m.stagePending(short, 0, -nudgeStep, 0); !strings.Contains(got, "zero or negative") {
 		t.Errorf("expected a zero-duration rejection, got %q", got)
 	}
 	if m.pending != nil {
@@ -302,8 +302,8 @@ func TestStagePendingRefusesASecondEvent(t *testing.T) {
 	first := &Event{ID: "a", Title: "First", StartAt: start, EndAt: start.Add(time.Hour), StartTime: "10:00"}
 	second := &Event{ID: "b", Title: "Second", StartAt: start, EndAt: start.Add(time.Hour), StartTime: "10:00"}
 	m := model{calendar: "me"}
-	m.stagePending(first, nudgeStep, nudgeStep)
-	got := m.stagePending(second, nudgeStep, nudgeStep)
+	m.stagePending(first, nudgeStep, nudgeStep, 0)
+	got := m.stagePending(second, nudgeStep, nudgeStep, 0)
 	if !strings.Contains(got, "First") {
 		t.Errorf("expected a refusal naming the already-staged event, got %q", got)
 	}
@@ -507,8 +507,170 @@ func TestDuplicateEventCopiesToNextWeek(t *testing.T) {
 	// W copies into the same slot next week (offset=7 days). The command
 	// is constructed locally; the real API call happens when bubbletea
 	// executes it (not during this test, so no OAuth is needed here).
-	cmd := m.duplicateEventCmd(ev, 7*24*time.Hour, "copied \"Standup\" to next week")
+	cmd := m.duplicateEventCmd(ev, 7, "copied \"Standup\" to next week")
 	if cmd == nil {
 		t.Fatal("expected a duplicate command for next week")
+	}
+}
+
+// TestDayMovePreservesWallClockAcrossDST is the regression for `>` / `<`.
+//
+// The keys are documented as "move to the next/prev day, keeping the time of
+// day", but they used to add a flat 24h. On a DST boundary that silently turns
+// a 10:00 meeting into an 11:00 one — the kind of error nobody re-checks,
+// because the label still reads "+1d".
+func TestDayMovePreservesWallClockAcrossDST(t *testing.T) {
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Skip("tzdata unavailable:", err)
+	}
+	prev := settings.timezones
+	settings.timezones = []tzOption{{label: "LA", zone: "America/Los_Angeles"}}
+	t.Cleanup(func() { settings.timezones = prev })
+
+	// 2026-03-08 is the US spring-forward date.
+	start := time.Date(2026, 3, 7, 10, 0, 0, 0, la)
+	ev := &Event{ID: "e1", Title: "sync", StartTime: "10:00",
+		StartAt: start, EndAt: start.Add(time.Hour)}
+
+	m := model{calendar: "c"}
+	m.stagePending(ev, 0, 0, 1)
+	if m.pending == nil {
+		t.Fatal("day move did not stage anything")
+	}
+	got := m.pending.start().In(la)
+	if got.Hour() != 10 || got.Minute() != 0 {
+		t.Errorf("start after +1d = %s, want 10:00 on Mar 08",
+			got.Format("Mon Jan 02 15:04 MST"))
+	}
+	if got.Day() != 8 {
+		t.Errorf("start landed on day %d, want the 8th", got.Day())
+	}
+	// The duration must survive the move too.
+	if d := m.pending.end().Sub(m.pending.start()); d != time.Hour {
+		t.Errorf("duration after the move = %s, want 1h", d)
+	}
+}
+
+func TestDayMovesCancelOut(t *testing.T) {
+	// > then < is back where it started, and nothing is left staged to save.
+	start := time.Date(2026, 9, 4, 10, 0, 0, 0, time.Local)
+	ev := &Event{ID: "e1", Title: "sync", StartTime: "10:00",
+		StartAt: start, EndAt: start.Add(time.Hour)}
+	m := model{calendar: "c"}
+	m.stagePending(ev, 0, 0, 1)
+	got := m.stagePending(ev, 0, 0, -1)
+	if m.pending != nil {
+		t.Errorf("opposite day moves left something staged: %+v", m.pending)
+	}
+	if !strings.Contains(got, "nothing to save") {
+		t.Errorf("status = %q, want it to say there is nothing left to save", got)
+	}
+}
+
+func TestDayMoveLabelReadsAsDays(t *testing.T) {
+	start := time.Date(2026, 9, 4, 10, 0, 0, 0, time.Local)
+	ev := &Event{ID: "e1", Title: "sync", StartTime: "10:00",
+		StartAt: start, EndAt: start.Add(time.Hour)}
+	m := model{calendar: "c"}
+	m.stagePending(ev, 0, 0, 1)
+	m.stagePending(ev, 0, 0, 1)
+	if got := m.pending.label(); got != "+2d" {
+		t.Errorf("label after two day moves = %q, want +2d", got)
+	}
+	// A day move combined with a nudge reports both.
+	m.stagePending(ev, nudgeStep, nudgeStep, 0)
+	if got := m.pending.label(); !strings.Contains(got, "+2d") || !strings.Contains(got, "15m") {
+		t.Errorf("combined label = %q, want both the day move and the nudge", got)
+	}
+}
+
+func TestUnsavedHintShowsTheResultingTime(t *testing.T) {
+	// The delta alone ("+1d") does not say what the event ends up as, and `s`
+	// writes to other people's calendars — so the resulting span belongs on the
+	// bar that names the key.
+	start := time.Date(2026, 9, 4, 10, 0, 0, 0, time.Local)
+	m := model{width: 120, height: 40, calendar: "c"}
+	m.pending = &pendingShift{
+		title: "Standup", origStart: start, origEnd: start.Add(time.Hour),
+		dayDelta: 1, loc: time.Local,
+	}
+	got := stripANSI(m.shortcutHint())
+	for _, want := range []string{"UNSAVED", "+1d", "Sep 04 10:00", "Sep 05 10:00", "s SAVE"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("hint bar %q missing %q", got, want)
+		}
+	}
+}
+
+func TestSaveWarnsThatAttendeesAreNotNotified(t *testing.T) {
+	// A quick save passes Notify:false. Moving a meeting without telling the
+	// people in it is a real hazard, so the status has to say it.
+	start := time.Date(2026, 9, 4, 10, 0, 0, 0, time.Local)
+	m := model{width: 120, height: 40, calendar: "c"}
+	m.pending = &pendingShift{
+		calendar: "c", eventID: "e1", title: "Standup",
+		origStart: start, origEnd: start.Add(time.Hour),
+		dayDelta: 1, loc: time.Local,
+		attendees: []string{"a@x.com", "b@x.com"},
+	}
+	updated, _, handled := m.handleQuickAction("s")
+	if !handled {
+		t.Fatal("s was not handled while a change was staged")
+	}
+	got := updated.(model).status
+	if !strings.Contains(got, "NOT notified") {
+		t.Errorf("status = %q, want it to say attendees are not notified", got)
+	}
+}
+
+func TestDuplicateNextWeekPreservesWallClockAcrossDST(t *testing.T) {
+	// `W` mirrors an event into the same slot next week. Adding 7*24h across a
+	// DST boundary lands it an hour off — invisible until someone misses it.
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Skip("tzdata unavailable:", err)
+	}
+	// 2026-03-04 + 7 days crosses the 2026-03-08 spring-forward date.
+	start := time.Date(2026, 3, 4, 10, 0, 0, 0, la)
+	ev := &Event{ID: "e1", Title: "Standup", StartTime: "10:00",
+		StartAt: start, EndAt: start.Add(30 * time.Minute)}
+
+	got, gotEnd := duplicateSpan(ev, 7, la)
+	if got.In(la).Hour() != 10 || got.In(la).Day() != 11 {
+		t.Errorf("copy starts at %s, want 10:00 on Mar 11",
+			got.In(la).Format("Mon Jan 02 15:04 MST"))
+	}
+	if d := gotEnd.Sub(got); d != 30*time.Minute {
+		t.Errorf("copy duration = %s, want 30m", d)
+	}
+}
+
+func TestDuplicateInPlaceKeepsTheExactTime(t *testing.T) {
+	// `D` copies with no offset, so both ends must be byte-identical instants —
+	// a "(copy)" that moved is a bug.
+	start := time.Date(2026, 9, 4, 10, 0, 0, 0, time.Local)
+	ev := &Event{ID: "e1", Title: "x", StartTime: "10:00",
+		StartAt: start, EndAt: start.Add(time.Hour)}
+	got, gotEnd := duplicateSpan(ev, 0, time.Local)
+	if !got.Equal(start) || !gotEnd.Equal(start.Add(time.Hour)) {
+		t.Errorf("in-place duplicate moved: %s-%s", got, gotEnd)
+	}
+}
+
+func TestDuplicateAllDayShiftsTheDateFields(t *testing.T) {
+	// All-day events carry their span in StartDate/EndDate; shifting StartAt
+	// (which is zero for them) would produce a copy in year 1.
+	day := time.Date(2026, 9, 4, 0, 0, 0, 0, time.Local)
+	ev := &Event{ID: "e1", Title: "Holiday", StartDate: day, EndDate: day.AddDate(0, 0, 1)}
+	if !ev.AllDay() {
+		t.Fatal("fixture is not an all-day event")
+	}
+	got, gotEnd := duplicateSpan(ev, 7, time.Local)
+	if got.IsZero() || gotEnd.IsZero() {
+		t.Fatalf("all-day duplicate produced a zero time: %s-%s", got, gotEnd)
+	}
+	if got.Day() != 11 {
+		t.Errorf("all-day copy starts on day %d, want the 11th", got.Day())
 	}
 }

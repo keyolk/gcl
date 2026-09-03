@@ -30,6 +30,16 @@ type appSettings struct {
 	eventTime       string     // default start time for new events (HH:MM)
 	eventDuration   int        // default duration for new events (minutes)
 	timezones       []tzOption // timezones cycled with the Z shortcut
+
+	// Mutual free-slot search (`f`). The defaults exclude only the small hours
+	// rather than enforcing office hours: a cross-timezone team's only shared
+	// window is often somebody's evening, and hiding it would hide the answer.
+	slotDuration     int  // default meeting length to place (minutes)
+	slotStep         int  // candidate start grid (minutes)
+	slotSearchDays   int  // how many days ahead to sweep
+	slotDayStart     int  // earliest bookable local hour (0-23)
+	slotDayEnd       int  // latest bookable local hour (1-24; 24 = midnight)
+	slotSkipWeekends bool // drop Saturday/Sunday candidates
 }
 
 // settings is populated by loadConfig; defaults are conservative (watcher off).
@@ -43,6 +53,13 @@ var settings = appSettings{
 	eventTime:       "10:00",
 	eventDuration:   30,
 	timezones:       defaultTimezones(),
+
+	slotDuration:     30,
+	slotStep:         30,
+	slotSearchDays:   14,
+	slotDayStart:     7, // nothing before 07:00 — the small hours are never a proposal
+	slotDayEnd:       24,
+	slotSkipWeekends: false,
 }
 
 // defaultTimezones is the built-in Z-cycle list. "local" (system tz) is always
@@ -261,6 +278,28 @@ func applySetting(s *appSettings, key, val string) {
 		if tzs := parseTimezones(val); len(tzs) > 0 {
 			s.timezones = tzs
 		}
+	case "slot_duration", "meeting_duration":
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			s.slotDuration = n
+		}
+	case "slot_step":
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			s.slotStep = n
+		}
+	case "slot_search_days", "slot_days":
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			s.slotSearchDays = n
+		}
+	case "slot_day_start":
+		if n, err := strconv.Atoi(val); err == nil && n >= 0 && n <= 23 {
+			s.slotDayStart = n
+		}
+	case "slot_day_end":
+		if n, err := strconv.Atoi(val); err == nil && n >= 1 && n <= 24 {
+			s.slotDayEnd = n
+		}
+	case "slot_skip_weekends":
+		s.slotSkipWeekends = parseBool(val, s.slotSkipWeekends)
 	}
 }
 
@@ -379,6 +418,19 @@ func defaultConfigText() string {
 	b.WriteString("# IANA zone, optionally 'Label=Zone'. 'local' (system tz) is always kept\n")
 	b.WriteString("# first. Example: timezones = KST=Asia/Seoul, PST=America/Los_Angeles, UTC\n")
 	fmt.Fprintf(&b, "timezones        = %s\n", formatTimezones(settings.timezones))
+	b.WriteString("\n")
+	b.WriteString("# Mutual free-slot search (`f`): pick people, then pick a time that works\n")
+	b.WriteString("# for all of them. Read via the Calendar free/busy API, so it works for\n")
+	b.WriteString("# colleagues whose event details you cannot see.\n")
+	fmt.Fprintf(&b, "slot_duration      = %d     # meeting length to place (minutes)\n", settings.slotDuration)
+	fmt.Fprintf(&b, "slot_step          = %d     # candidate start grid (minutes)\n", settings.slotStep)
+	fmt.Fprintf(&b, "slot_search_days   = %d     # how many days ahead to sweep\n", settings.slotSearchDays)
+	b.WriteString("# slot_day_start / slot_day_end clip each LOCAL day. The default excludes\n")
+	b.WriteString("# only the small hours (midnight-07:00) so a cross-timezone team's evening\n")
+	b.WriteString("# window still shows up. Set 9 / 18 for strict office hours.\n")
+	fmt.Fprintf(&b, "slot_day_start     = %d      # earliest bookable hour (0-23)\n", settings.slotDayStart)
+	fmt.Fprintf(&b, "slot_day_end       = %d     # latest bookable hour (1-24; 24 = midnight)\n", settings.slotDayEnd)
+	fmt.Fprintf(&b, "slot_skip_weekends = %t  # drop Saturday/Sunday candidates\n", settings.slotSkipWeekends)
 	b.WriteString("\n")
 	b.WriteString("# In-app reminder watcher: while the TUI is open, upcoming events in the\n")
 	b.WriteString("# current calendar are announced as non-focus-stealing toasts (tmux\n")

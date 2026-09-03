@@ -108,6 +108,10 @@ question a maintenance-window calendar is read for. Every list row gets a mini
 - Jump to an attendee's calendar (`A`)
 - Copy event summaries, Calendar URLs, timestamps, and descriptions with `y` combinations
 - Create a new event (`N`)
+- **Find a time** (`f`) across several people's calendars and book it — see
+  [Find a time](#find-a-time-f)
+- **Overlay** several people's calendars into one agenda (`O`) — see
+  [Overlaying calendars](#overlaying-calendars-o)
 - Edit an event (`E`)
 - Delete an event (`X`)
 - Staged time adjustments (`)( }{ ><`) previewed in the view and written only on
@@ -168,6 +172,14 @@ default_step     = day               # list-view h/l step: day | week | month
 timeline         = true              # list-view 24h overlap bars + density ruler (t toggles)
 event_time       = 10:00             # new-event default start time
 event_duration   = 30                # new-event default duration (minutes)
+
+# Find-a-time (`f`) defaults
+slot_duration      = 30    # meeting length to place (minutes)
+slot_step          = 30    # candidate start grid (minutes)
+slot_search_days   = 14    # how many days ahead to sweep
+slot_day_start     = 7     # earliest bookable local hour (0-23)
+slot_day_end       = 24    # latest bookable local hour (1-24; 24 = midnight)
+slot_skip_weekends = false # drop Saturday/Sunday candidates
 timezones        = local, KST=Asia/Seoul, UTC   # cycled with the Z key
 notify           = false             # in-app reminder watcher
 notify_window    = 15                # fallback minutes for events with no reminder
@@ -309,6 +321,8 @@ upcoming events in the given window.
 - `Z` — cycle timezone (list configured via `timezones`; `local` first)
 - `n` — jump to now (today if loaded, else the nearest upcoming event)
 - `a` — **active now**: everything in effect at this moment
+- `f` — **find a time**: pick people, book a mutually open slot
+- `O` — **overlay**: merge several calendars into one agenda
 - `e` — calendar picker
 - `/` — fuzzy search
 
@@ -365,6 +379,141 @@ Details:
   are active than fit
 - the count and countdowns refresh on their own (30s tick) — no keypress needed
 
+### Overlaying calendars (`O`)
+
+"Who is in this slot?" and "when is the team actually free?" are questions about
+several calendars at once, and reading them one at a time answers neither. `O`
+loads a set of calendars into the **same** agenda:
+
+```text
+  📅 3 calendars  O:edit   LIST | 2026-09-04 | step:day   🕓 local
+ Fri Sep 04                        5 events · peak 2  0   3   6   9  12  15  18  21
+   09:00-09:30 ● gavin    Standup                     ██
+   10:00-11:00 ● jace.son 1:1 with lead                  ████
+ ▸ 10:00-11:30 ● yuna.kim Design review                   █████
+   14:00-15:00 ● gavin    Retro                                    ████
+   15:00-17:00 ● jace.son Deep work block                            ███████
+
+  ● gavin 2  ● jace.son 2  ● yuna.kim 1
+```
+
+Every row gains a color dot and the owner's name, and **the 24h timeline bars
+are tinted per person** — so the shared axis shows not just *that* two events
+overlap but *whose* they are. That reuses the machinery already there rather
+than adding a column-per-person view, which would cost `people × column width`
+and stop fitting after three or four of them.
+
+Because the events land in the same list, **every existing view works on the
+merged set**: the list agenda, the week and month grids, `/` search, the `a`
+active-now panel, and the `t` overlap timeline all gain multi-person data with
+no separate mode to learn.
+
+- `space` — toggle a calendar; type a full email/id with no match to add one
+- `Enter` — apply. **Enter with nothing picked turns the overlay off.**
+- `O` again — re-opens the picker with the current set still selected, so
+  adding a fourth person does not mean re-picking the first three
+- `e` — picking a single calendar also turns the overlay off; you asked for
+  that one calendar
+
+The legend under the agenda maps color → person and prints each one's event
+count. A calendar that **could not be read** is shown hollow with the reason
+(`○ yuna.kim (no access)`) and named in the status line, because an overlay that
+silently drops a calendar looks exactly like that person having nothing
+scheduled — the most dangerous way this could fail.
+
+**Which calendar an action hits.** Editing (`E`), deleting (`X`), duplicating
+(`D`/`W`) and the staged moves (`)( }{ ><` then `s`) all act on the **selected
+row's own** calendar, and its owner is named in the confirm step — patching a
+colleague's event against your own calendar id would 404, or hit a same-titled
+event on the wrong calendar. Creating (`N`) has no row to follow, so a new event
+lands on the calendar you have open; the form header names it.
+
+Reminder toasts keep scanning only your own calendar while an overlay is on:
+they are for events you have to attend, and toasting a colleague's 1:1 because
+their calendar is on screen would be noise.
+
+At most 8 calendars can be overlaid — past the palette, every extra person
+reuses a color and the dots stop identifying anyone, so a larger set is refused
+rather than rendered as a lie. On a pane too narrow to carry both the name and
+the timeline, the **name** gives way first (down to the bare dot): overlap is
+the reason to overlay at all, and the legend still carries the mapping.
+
+### Find a time (`f`)
+
+Answers the question a calendar viewer is worst at: **when can these people
+actually meet?** Doing it by hand means opening five calendars in five tabs and
+diffing them by eye — exactly the work a computer should do.
+
+`f` opens a two-step flow.
+
+**Step 1 — who is coming.** A fuzzy picker over everyone seen on the loaded
+events, your recent calendars, and the calendar currently open. You are
+pre-selected (a meeting you schedule is one you attend).
+
+```text
+  ┌ Find a time · who? ─────────────────────────┐
+  │ › jace                                      │
+  │  2 picked  gavin.jeong, jace.son            │
+  │ * jace.son@company.com                      │
+  │   jaewon.kim@company.com                    │
+  │ space toggle · Enter find slots · ESC cancel│
+  └─────────────────────────────────────────────┘
+```
+
+- `space` — toggle the highlighted person. Type a full address with no match and
+  `space` adds it directly, so someone outside the loaded events is still
+  invitable.
+- `Enter` — read everyone's free/busy and rank the open slots.
+
+**Step 2 — pick a slot.** Slots where **everyone** is free come first (green
+`✓4/4`); partial ones stay in the list (amber `3/4`) with the blocked people
+named underneath, because a 3/4 slot at a good hour often beats no slot at all.
+
+```text
+  ┌ Find a time · 1h for 4 ─────────────────────┐
+  │  next 14d · 07:00-24:00 · weekends included │
+  │ ▸ Thu 09-04 10:00-11:00  ✓4/4               │
+  │   Thu 09-04 15:00-16:00  ✓4/4               │
+  │   Fri 09-05 09:30-10:30   3/4  +1?          │
+  │                                             │
+  │  busy: jace.son                             │
+  │  unknown (no free/busy access): contractor  │
+  └─────────────────────────────────────────────┘
+```
+
+- `j` / `k`, `g` / `G` — move
+- `d` — cycle the meeting length (15/30/45/60/90/120m)
+- `w` — toggle weekends
+- `H` — open the day up to a full 24h and back to the configured hours
+- `R` — re-read free/busy
+- `esc` — back to the participant picker (the usual fix for a disappointing list)
+- `Enter` — **prefill the new-event form** with that slot and those attendees
+
+`Enter` deliberately hands off to the normal create form rather than booking
+outright: the form is where the title, location, and the "invitation emails will
+be sent to N people" warning already live, and a mis-picked slot that has
+already mailed five people is not something `u` makes comfortable to undo. Type
+a title, press `Enter`, confirm — and only then does anything reach Google.
+
+Details worth knowing:
+
+- **Free/busy, not event bodies.** The lookup uses the Calendar free/busy API,
+  so it works for colleagues whose event details you cannot read.
+- **Unreadable calendars are their own category.** Someone whose free/busy is
+  not accessible is counted as neither free nor busy — the badge reads `✓3/3`
+  with a separate `+1?`, never a `3/4` that would claim a conflict nobody
+  observed. When a search finds nothing, the unreadable calendars are named, so
+  "no slot" and "no slot that we could see" stay distinguishable.
+- **Back-to-back is free.** Busy intervals are half-open: a meeting ending at
+  14:00 does not block a 14:00 start.
+- **One entry per gap.** A wide-open afternoon offers a single 13:00 slot, not
+  13:00/13:30/14:00/…; each contiguous run of identical availability collapses
+  to its earliest start.
+- **The small hours are excluded by default** (`slot_day_start = 7`) rather than
+  office hours being enforced, because a cross-timezone team's only shared
+  window is often somebody's evening. `H` lifts even that; see
+  [Configuration](#configuration) to change the defaults.
+
 ### List view
 
 - `h` / `l` — move backward/forward by current step
@@ -418,14 +567,18 @@ and then decide:
 
 - `)` / `(` — move the event 15 minutes later / earlier (duration preserved)
 - `}` / `{` — lengthen / shorten by 15 minutes (start preserved)
-- `>` / `<` — move to the next / previous day (time of day preserved)
+- `>` / `<` — move to the next / previous **calendar** day (wall-clock time
+  preserved, so a move across a DST boundary keeps a 10:00 meeting at 10:00
+  rather than sliding it to 11:00)
 
 While a change is staged:
 
 - the event's row shows the **new** time with a `!+45m` marker in amber
 - the detail pane spells out `saved → staged` in full
-- the bottom bar turns amber and reads
-  `UNSAVED +45m on "Standup" | s SAVE to Google | esc discard`
+- the bottom bar turns amber and spells out the **resulting time**, not just
+  the delta: `UNSAVED +1d: Sep 04 10:00-11:00 -> Sep 05 10:00-11:00 | s SAVE to
+  Google | esc discard`. The delta alone does not say what the event ends up
+  as, and a narrow window has no detail pane to check it in.
 - `q` refuses to quit, so an adjustment is never lost by accident
 
 Then:
@@ -449,7 +602,10 @@ These apply right away — there is no meaningful half-applied state to render f
 a copy — and each is undoable with `u`.
 
 Saving a staged change, duplicating, and undo never email attendees — they are
-for your own calendar hygiene. Use `E` when a change should notify people.
+for your own calendar hygiene. When the event has attendees, the save status
+says so explicitly (`2 attendees NOT notified`), because moving a meeting
+without telling the people in it is the kind of thing worth knowing you just
+did. Use `E` when a change should notify people.
 All-day events cannot be nudged (they have no time to move), but they can be
 duplicated.
 
@@ -473,6 +629,66 @@ You can:
 
 The form shows a live preview of the resolved day, start → end time, and
 duration, so shorthand input is confirmed before you submit.
+
+### Catching mistakes before they reach Google
+
+Both create and edit stop at a confirmation step. It is the only screen between
+a typo and other people's calendars, so it shows what you are actually about to
+do — not a restatement of the form, which the eye slides straight over.
+
+**Creating** shows the resolved time, the location, and the things that are hard
+to see from the shorthand still sitting in the fields:
+
+```text
+  ┌ Create event? ───────────────────────────────────────────┐
+  │  회고                                                     │
+  │ Sat Aug 29  10:00 → 20:00 (10h)  local                   │
+  │ ↻ repeats weekly — forever (add "x4" to limit it)        │
+  │ ⚠ starts in the PAST (5d4h ago)                          │
+  │ ⚠ runs for 10h — is that right?                          │
+  │                                                          │
+  │ ✉ Google will email 2 people                             │
+  │ y/Enter create  |  n/ESC back to form                    │
+  └──────────────────────────────────────────────────────────┘
+```
+
+**Editing** shows only what *changes*, old → new. A rename is one line; fields
+you did not touch are not mentioned, because they are not what a mis-edit gets
+wrong. Changes that reach other people — time moves, attendee add/removes — are
+marked `!`:
+
+```text
+  ┌ Save changes to event? ──────────────────────────────────┐
+  │  Team sync                                               │
+  │ 2 change(s):                                             │
+  │ ! Time      Fri Sep 04 10:00-11:00                       │
+  │           → Sat Sep 05 14:00-14:30                       │
+  │ ! Attendees 2 → 1  (-b)                                  │
+  │                                                          │
+  │ ✉ Google will email 2 people                             │
+  └──────────────────────────────────────────────────────────┘
+```
+
+What gets called out:
+
+- **A start in the past.** `-3d` typed for `+3d`, or a month that has already
+  gone by. Nothing rejects it, so it is easy to land an event in last week
+  without noticing.
+- **An endless repeat.** `weekly` with no count creates an event that never
+  ends — the one field where a mistake keeps multiplying after you have
+  forgotten about it. `weekly x4` is not flagged.
+- **Outlier durations** (≥8h or <5m). `8` meaning 8 minutes and `8h` meaning 8
+  hours both look plausible in the field.
+- **An unchanged edit.** Submitting a form you did not actually change would
+  mail everyone for nothing.
+- **Who gets mail.** Editing notifies the event's whole attendee list plus
+  anyone you removed (they get a cancellation) — not just the people added.
+
+None of these are blocked: each has a legitimate use (logging a retro after the
+fact, an all-day workshop, an open-ended standup). They are warnings, shown in
+amber, and the past-start and duration ones also appear live in the form itself
+while you type — a date that resolved to last week is easiest to fix in the
+field it came from.
 
 ### Flexible date/time input
 
