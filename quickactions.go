@@ -119,32 +119,49 @@ func (m model) undoCmd() tea.Cmd {
 	}
 }
 
-// duplicateEventCmd copies the selected event, optionally offset by `offset`
-// (used for "same slot next week"). The copy keeps attendees but never mails
-// them — a duplicate is a draft until you explicitly edit and notify.
-func (m model) duplicateEventCmd(ev *Event, offset time.Duration, label string) tea.Cmd {
+// duplicateSpan computes where a duplicate lands. Split out of
+// duplicateEventCmd so it is testable without an API call — the DST behaviour
+// below is exactly the kind of thing that needs a test.
+//
+// The offset is applied as whole CALENDAR days in the display timezone. Adding
+// 7*24h instead would land "same slot next week" an hour off across a DST
+// boundary, which is invisible until someone misses the meeting.
+//
+// All-day events carry their date in StartDate/EndDate (StartAt/EndAt are
+// zero), so those are the fields shifted for them.
+func duplicateSpan(ev *Event, days int, tz *time.Location) (start, end time.Time) {
+	shift := func(t time.Time) time.Time {
+		if days == 0 || t.IsZero() {
+			return t
+		}
+		return t.In(tz).AddDate(0, 0, days)
+	}
+	if ev.AllDay() {
+		return shift(ev.StartDate), shift(ev.EndDate)
+	}
+	return shift(ev.StartAt), shift(ev.EndAt)
+}
+
+// duplicateEventCmd copies the selected event, optionally offset by `days`
+// whole calendar days (used for "same slot next week"). The copy keeps
+// attendees but never mails them — a duplicate is a draft until you explicitly
+// edit and notify.
+//
+// The offset is in DAYS rather than a duration on purpose: adding 7*24h across
+// a DST boundary lands the copy an hour off the slot it was supposed to mirror.
+func (m model) duplicateEventCmd(ev *Event, days int, label string) tea.Cmd {
 	if ev == nil || ev.ID == "" {
 		return nil
 	}
-	cal := m.calendar
+	// A duplicate lands on the calendar the source event lives on, which in an
+	// overlay is not necessarily the one currently open.
+	cal := m.eventCalendar(ev)
 	title := ev.Title
-	if offset == 0 {
+	if days == 0 {
 		title = strings.TrimSpace(ev.Title) + " (copy)"
 	}
-	// All-day events carry their date in StartDate/EndDate (StartAt/EndAt are
-	// zero); shift the date fields and flag the copy as all-day so the
-	// API payload uses `date` instead of `dateTime`. Timed events shift
-	// the absolute StartAt/EndAt as before.
 	allDay := ev.AllDay()
-	start := ev.StartAt
-	end := ev.EndAt
-	if allDay {
-		start = ev.StartDate.Add(offset)
-		end = ev.EndDate.Add(offset)
-	} else {
-		start = start.Add(offset)
-		end = end.Add(offset)
-	}
+	start, end := duplicateSpan(ev, days, m.tz())
 	loc := ev.Location
 	desc := ev.Description
 	var atts []string
@@ -206,11 +223,18 @@ func (m model) handleQuickAction(key string) (tea.Model, tea.Cmd, bool) {
 				return m, nil, true
 			}
 			label := m.pending.label()
-			title := m.pending.title
 			// Keep the staged change until the patch is confirmed, so a failed
 			// save is retryable rather than silently lost.
+			n := len(m.pending.attendees)
 			cmd := m.commitPendingCmd()
-			m.status = "saving " + label + " on \"" + title + "\"~"
+			m.status = "saving " + label + "~"
+			if n > 0 {
+				// Quick saves pass Notify:false. Moving a meeting without
+				// telling the people in it is a real hazard, so say it plainly
+				// instead of leaving it to the source comment.
+				m.status += fmt.Sprintf(" · %d %s NOT notified (E to edit and notify)",
+					n, plural(n, "attendee", "attendees"))
+			}
 			return m, cmd, true
 		case "esc":
 			if m.pending.saving {
@@ -233,29 +257,29 @@ func (m model) handleQuickAction(key string) (tea.Model, tea.Cmd, bool) {
 	// Nudges/resizes/day-moves stage a change; they no longer patch Google.
 	switch key {
 	case ")":
-		m.status = m.stagePending(ev, nudgeStep, nudgeStep)
+		m.status = m.stagePending(ev, nudgeStep, nudgeStep, 0)
 		return m, nil, true
 	case "(":
-		m.status = m.stagePending(ev, -nudgeStep, -nudgeStep)
+		m.status = m.stagePending(ev, -nudgeStep, -nudgeStep, 0)
 		return m, nil, true
 	case "}":
-		m.status = m.stagePending(ev, 0, nudgeStep)
+		m.status = m.stagePending(ev, 0, nudgeStep, 0)
 		return m, nil, true
 	case "{":
-		m.status = m.stagePending(ev, 0, -nudgeStep)
+		m.status = m.stagePending(ev, 0, -nudgeStep, 0)
 		return m, nil, true
 	case ">":
-		m.status = m.stagePending(ev, 24*time.Hour, 24*time.Hour)
+		m.status = m.stagePending(ev, 0, 0, 1)
 		return m, nil, true
 	case "<":
-		m.status = m.stagePending(ev, -24*time.Hour, -24*time.Hour)
+		m.status = m.stagePending(ev, 0, 0, -1)
 		return m, nil, true
 	case "D":
 		m.status = "duplicating~"
 		return m, m.duplicateEventCmd(ev, 0, "duplicated \""+ev.Title+"\""), true
 	case "W":
 		m.status = "copying to next week~"
-		return m, m.duplicateEventCmd(ev, 7*24*time.Hour, "copied \""+ev.Title+"\" to next week"), true
+		return m, m.duplicateEventCmd(ev, 7, "copied \""+ev.Title+"\" to next week"), true
 	}
 	return m, nil, false
 }

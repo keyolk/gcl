@@ -43,8 +43,14 @@ const (
 // the timeline, or 0 when the pane is too narrow to carry one at all. Only the
 // three tier widths are ever returned, so hour ticks land on exact column
 // boundaries and every row of the frame shares one axis.
-func timelineCols(width int) int {
-	switch avail := width - timelineReserve; {
+func timelineCols(width int) int { return timelineColsWithReserve(width, 0) }
+
+// timelineColsWithReserve is timelineCols with extra columns spoken for by
+// something else on the row — currently the overlay's "● name " owner tag.
+// Without accounting for it, a three-person overlay silently loses its bars on
+// panes that were wide enough a moment earlier, which reads as a bug.
+func timelineColsWithReserve(width, extra int) int {
+	switch avail := width - timelineReserve - extra; {
 	case avail >= timelineMaxCols:
 		return timelineMaxCols
 	case avail >= timelineMidCols:
@@ -317,6 +323,15 @@ func (m model) timelineBar(ev *Event, dayStart time.Time, cols int, selected boo
 			bg = tlAllDayBG
 		case isActiveAt(ev, now):
 			bg = tlActiveBG
+		default:
+			// In an overlay the bar is tinted with its owner's color, so the
+			// vertical alignment that already shows *that* two events overlap
+			// also shows *whose* they are. Row state (selected / staged /
+			// active-now) still wins: those say something about this row that
+			// matters more than who owns it.
+			if c := m.overlayColorFor(ev.Calendar); c != "" {
+				bg = c
+			}
 		}
 		for c := lo; c <= hi; c++ {
 			cells[c] = cell{bg: bg, ch: ' '}

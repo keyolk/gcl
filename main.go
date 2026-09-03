@@ -234,6 +234,17 @@ type model struct {
 	// of a maintenance-window calendar, so the zero value -- and the default --
 	// is to SHOW them; narrow panes drop them automatically regardless.
 	timelineHidden bool
+	// find drives the "find a time" flow (`f`): pick people, read their
+	// free/busy, and prefill the create form from a mutually-open slot.
+	find findState
+	// overlay drives multi-calendar viewing (`O`): several people's events are
+	// merged into m.events and tagged by owner, so every existing view works on
+	// them unchanged. Empty active set == no overlay.
+	overlay overlayState
+	// pendingNote is a status message that must survive the "loading~" a fetch
+	// installs, to be shown once that fetch lands. Without it, anything worth
+	// saying at the moment a reload is triggered is immediately overwritten.
+	pendingNote string
 }
 
 // createState holds the step-by-step new-event form.
@@ -260,6 +271,28 @@ type createState struct {
 	editingField bool   // false=navigate fields with j/k, true=edit current field / attendee filter
 	editing      bool   // true = patch existing event, false = insert new
 	eventID      string // target event id when editing
+	// calendar is the calendar this form writes to. It is normally m.calendar,
+	// but an edit opened from an OVERLAY row must patch that row's own
+	// calendar — patching someone else's event against your own calendar id
+	// either 404s or hits a same-titled event on the wrong calendar.
+	calendar string
+	// orig snapshots the event's values when an edit form opens, so the confirm
+	// step can show what actually CHANGES rather than restating the whole form.
+	// "Which fields am I about to touch?" is the question that catches a
+	// mis-typed edit, and a summary of every field cannot answer it.
+	orig *editSnapshot
+}
+
+// editSnapshot is the pre-edit value of every field the form can change. Only
+// set when editing an existing event.
+type editSnapshot struct {
+	title       string
+	date        string // YYYY-MM-DD in the display tz
+	start       string // HH:MM in the display tz
+	duration    int    // minutes
+	location    string
+	description string
+	attendees   []string // sorted
 }
 
 type createStep int
@@ -293,6 +326,11 @@ const (
 	modeSearch
 	modeCreate
 	modeConfirmDelete
+	// modeFindTime is the two-step "find a time" overlay: pick participants,
+	// then pick from the slots that are mutually open.
+	modeFindTime
+	// modeOverlayPicker chooses which calendars are merged into the agenda.
+	modeOverlayPicker
 )
 
 type pickerKind int
@@ -403,6 +441,10 @@ var (
 	// same as a committed time.
 	pendingStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
 	pendingBarStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("232")).Background(lipgloss.Color("214"))
+	// warnStyle marks "legal but probably a mistake" at the confirm step —
+	// amber, not red: errorStyle is for things that will fail or reach other
+	// people, and a warning that shouts as loudly as those stops being read.
+	warnStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
 )
 
 func main() {
@@ -532,6 +574,10 @@ func notifyTickCmd() tea.Cmd {
 
 // notifyScanCmd runs one scan-and-toast pass for the current calendar off the
 // UI thread, then reports how many reminders fired via a status message.
+//
+// It deliberately scans m.calendar even while an OVERLAY is on: reminders are
+// for events you have to attend, and toasting a colleague's 1:1 because their
+// calendar happens to be on screen would be noise, not information.
 func (m model) notifyScanCmd() tea.Cmd {
 	calendar := m.calendar
 	return func() tea.Msg {
@@ -580,6 +626,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.status = fmt.Sprintf("loaded %d events", len(m.events))
 		}
+		if m.pendingNote != "" {
+			m.status = m.pendingNote
+			m.pendingNote = ""
+		}
+		return m, nil
+	case overlayLoadedMsg:
+		if msg.reqID != m.inflightReq {
+			return m, nil
+		}
+		m.loading = false
+		m.err = nil
+		m.events = msg.events
+		m.loadedStart = msg.start
+		m.loadedEnd = msg.end
+		m.overlay.failed = msg.failed
+		if m.selected < 0 || m.selected >= len(m.events) || m.selectedEvent() == nil {
+			m.selected = m.firstEventIndexOnOrAfter(m.anchor)
+		}
+		// A calendar that failed to load looks exactly like an empty one in the
+		// agenda, which is the most dangerous way this can be wrong — say it.
+		if n := len(msg.failed); n > 0 {
+			var names []string
+			for cal := range msg.failed {
+				names = append(names, overlayShortName(cal))
+			}
+			sort.Strings(names)
+			m.status = fmt.Sprintf("%d events · %d calendar(s) NOT loaded: %s",
+				len(m.events), n, strings.Join(names, ", "))
+		} else {
+			m.status = fmt.Sprintf("%d events across %d calendars",
+				len(m.events), len(m.overlay.active))
+		}
 		return m, nil
 	case statusMsg:
 		m.status = string(msg)
@@ -589,6 +667,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "copy failed: " + msg.err.Error()
 		} else {
 			m.status = "copied " + msg.label
+		}
+		return m, nil
+	case findTimeMsg:
+		m.find.loading = false
+		if msg.err != nil {
+			m.find.err = msg.err.Error()
+			m.find.slots = nil
+			return m, nil
+		}
+		m.find.err = ""
+		m.find.results = msg.results
+		m.find.slots = msg.slots
+		m.find.slotIdx = max(0, min(m.find.slotIdx, len(msg.slots)-1))
+		switch {
+		case len(msg.slots) == 0:
+			m.status = "no slot fits — try d (shorter) or H (open up the hours)"
+		case msg.slots[0].allFree():
+			m.status = fmt.Sprintf("%d slots · best: %s works for everyone",
+				len(msg.slots), m.slotRangeLabel(msg.slots[0]))
+		default:
+			m.status = fmt.Sprintf("%d slots · nobody is free for all of it — best is %d/%d",
+				len(msg.slots), len(msg.slots[0].free), len(msg.slots[0].free)+len(msg.slots[0].busy))
 		}
 		return m, nil
 	case createdMsg:
@@ -686,6 +786,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCreateKey(msg)
 	}
 
+	if m.mode == modeFindTime {
+		return m.handleFindKey(msg)
+	}
+
+	if m.mode == modeOverlayPicker {
+		return m.handleOverlayKey(msg)
+	}
+
 	if m.mode == modeConfirmSubmit {
 		switch key {
 		case "y", "Y", "enter":
@@ -714,7 +822,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.mode = modeNormal
 				return m, nil
 			}
-			cal := m.calendar
+			// In an overlay the row may belong to someone else's calendar;
+			// deleting against m.calendar would 404 or, worse, hit a
+			// same-titled event on the wrong calendar.
+			cal := m.eventCalendar(ev)
 			id := ev.ID
 			notify := len(ev.Attendees) > 0
 			// Snapshot before deleting so `u` can recreate the event.
@@ -768,7 +879,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "up", "ctrl+p", "ctrl+k":
 			m.searchIndex = max(0, m.searchIndex-1)
 		default:
-			if key == "space" {
+			if key == " " || key == "space" {
 				m.input += " "
 				m.searchIndex = 0
 			} else if len(key) == 1 {
@@ -814,7 +925,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.picker.index = max(0, m.picker.index-1)
 			return m, nil
 		default:
-			if key == "space" {
+			if key == " " || key == "space" {
 				m.input += " "
 				m.picker.index = 0
 			} else if len(key) == 1 {
@@ -1044,6 +1155,23 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "N":
 		m.mode = modeCreate
 		m.create = m.newCreateState()
+	case "f":
+		// Find a time across several people. Opens on the participant picker;
+		// the slot search only runs once you have chosen who is coming.
+		m.mode = modeFindTime
+		m.find = m.newFindState()
+		m.status = "who is coming? space toggles · Enter finds open slots"
+	case "O":
+		// Overlay several calendars into one agenda. Re-opening while an
+		// overlay is on starts from the current set, and confirming an empty
+		// set turns it back off.
+		m.mode = modeOverlayPicker
+		m.overlay = m.newOverlayState()
+		if m.overlay.on() {
+			m.status = "overlay: space toggles · Enter applies · empty = off"
+		} else {
+			m.status = "whose calendars? space toggles · Enter overlays them"
+		}
 	case "E":
 		if ev := m.currentActionEvent(); ev != nil {
 			if ev.StartAt.IsZero() {
@@ -1053,7 +1181,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.create = m.editCreateState(ev)
 				// Snapshot the pre-edit values so a successful patch can be
 				// reversed with `u`.
-				m.preEdit = undoSnapshot(ev, m.calendar, undoPatch)
+				m.preEdit = undoSnapshot(ev, m.eventCalendar(ev), undoPatch)
 			}
 		}
 	case "a":
@@ -1091,7 +1219,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "timeline off (t shows the overlap bars again)"
 		case m.view != viewList:
 			m.status = "timeline on — it draws in the list view (g)"
-		case timelineCols(max(20, m.schedulePaneWidth()-1)) == 0:
+		case timelineColsWithReserve(max(20, m.schedulePaneWidth()-1), m.overlayRowReserve()) == 0:
 			m.status = "timeline on — but this pane is too narrow to draw it"
 		default:
 			m.status = "timeline on: bars share a 00-24h axis, the ruler shades how many run at once"
@@ -1291,20 +1419,30 @@ func (m model) editCreateState(ev *Event) createState {
 		}
 	}
 	return createState{
-		step:         stepTitle,
-		title:        ev.Title,
-		date:         ev.StartAt.In(loc).Format("2006-01-02"),
-		start:        ev.StartAt.In(loc).Format("15:04"),
-		durationStr:  fmt.Sprintf("%d", dur),
-		duration:     dur,
-		location:     ev.Location,
-		description:  ev.Description,
-		selected:     sel,
+		step:        stepTitle,
+		title:       ev.Title,
+		date:        ev.StartAt.In(loc).Format("2006-01-02"),
+		start:       ev.StartAt.In(loc).Format("15:04"),
+		durationStr: fmt.Sprintf("%d", dur),
+		duration:    dur,
+		location:    ev.Location,
+		description: ev.Description,
+		selected:    sel,
+		orig: &editSnapshot{
+			title:       ev.Title,
+			date:        ev.StartAt.In(loc).Format("2006-01-02"),
+			start:       ev.StartAt.In(loc).Format("15:04"),
+			duration:    dur,
+			location:    ev.Location,
+			description: ev.Description,
+			attendees:   sortedKeys(sel),
+		},
 		attCands:     m.attendeeCandidatePool(),
 		locCands:     m.locationCandidatePool(),
 		editingField: true,
 		editing:      true,
 		eventID:      ev.ID,
+		calendar:     m.eventCalendar(ev),
 	}
 }
 
@@ -1419,7 +1557,7 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				nextField(-1)
 			case "enter", "i":
 				c.editingField = true
-			case "space":
+			case " ", "space":
 				c.editingField = true
 				*field += " "
 			}
@@ -1478,7 +1616,7 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		default:
-			if key == "space" {
+			if key == " " || key == "space" {
 				*field += " "
 			} else if len(key) == 1 {
 				*field += msg.String()
@@ -1509,7 +1647,7 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "shift+tab", "up", "ctrl+p", "ctrl+k":
 			c.editingField = false
 			nextField(-1)
-		case "space":
+		case " ", "space":
 			if len(cands) > 0 {
 				it := cands[max(0, min(c.attCandidx, len(cands)-1))]
 				c.toggle(it.value)
@@ -1646,7 +1784,12 @@ func filterPickerItems(items []pickerItem, query string) []pickerItem {
 
 func (m model) submitCreateCmd() tea.Cmd {
 	c := m.create
+	// An edit carries its target calendar (an overlay row may not be ours);
+	// a new event always lands on the calendar currently open.
 	cal := m.calendar
+	if c.editing && c.calendar != "" {
+		cal = c.calendar
+	}
 	loc := m.tz()
 	return func() tea.Msg {
 		day, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(c.date), loc)
@@ -1783,6 +1926,17 @@ func (m model) choosePicker(it pickerItem) (tea.Model, tea.Cmd) {
 		m.calendar = it.value
 		m.loading = true
 		m.status = "loading~"
+		// Switching calendars while an overlay is on would otherwise change
+		// only which calendar new events land on, leaving the agenda showing
+		// the same merged set — the keypress would look like it did nothing.
+		// Picking a single calendar means you want that calendar.
+		if m.overlay.on() {
+			m.overlay.active = nil
+			m.overlay.failed = nil
+			// scheduleFetch overwrites status with "loading~", so the note has
+			// to survive until the load lands (see eventsMsg).
+			m.pendingNote = "overlay off · " + displayNameForCalendar(it.value)
+		}
 		rememberCalendar(it.value)
 		return m, m.reload()
 	}
@@ -1847,6 +2001,11 @@ func (m model) View() string {
 	}
 	viewName := map[viewMode]string{viewList: "LIST", viewWeek: "WEEK", viewMonth: "MONTH"}[m.view]
 	calPill := calPillStyle.Render("📅 " + m.calendarDisplayName() + "  e:switch")
+	// While an overlay is on, the calendar pill would otherwise still name a
+	// single calendar and quietly misdescribe what is on screen.
+	if m.overlay.on() {
+		calPill = calPillStyle.Render(fmt.Sprintf("📅 %d calendars  O:edit", len(m.overlay.active)))
+	}
 	tzPill := tzPillStyle.Render("🕓 " + m.tzLabel())
 	metaText := fmt.Sprintf("%s | %s", viewName, m.anchor.Format("2006-01-02"))
 	if m.view == viewList {
@@ -1876,6 +2035,14 @@ func (m model) View() string {
 	// schedule's own scroll position undisturbed when the panel toggles.
 	activeH := m.activePanelHeight(contentHeight)
 	scheduleHeight := max(3, contentHeight-activeH)
+	// The overlay legend is the only thing that maps a dot color to a person,
+	// so it costs a permanent row while an overlay is on — dots without a key
+	// are decoration.
+	legendH := 0
+	if m.overlay.on() && !m.loading {
+		legendH = 1
+		scheduleHeight = max(3, scheduleHeight-1)
+	}
 	var body string
 	if m.loading {
 		body = cardStyle.Width(max(20, bodyWidth-4)).Render("loading calendar events~")
@@ -1910,6 +2077,9 @@ func (m model) View() string {
 			panel := fitPane(m.viewActivePanel(bodyWidth, activeH), bodyWidth, activeH)
 			body = panel + "\n" + clampToHeight(body, scheduleHeight)
 		}
+		if legendH > 0 {
+			body = clampToHeight(body, scheduleHeight) + "\n" + m.overlayLegend(bodyWidth)
+		}
 	}
 
 	body = clampLineWidth(body, bodyWidth)
@@ -1918,6 +2088,10 @@ func (m model) View() string {
 	// Modal overlays (create/edit, delete, pickers) still float bottom-right.
 	if m.mode == modeCreate {
 		body = overlayBottomRight(body, m.viewCreate(), bodyWidth, contentHeight)
+	} else if m.mode == modeFindTime {
+		body = overlayBottomRight(body, m.viewFindTime(), bodyWidth, contentHeight)
+	} else if m.mode == modeOverlayPicker {
+		body = overlayBottomRight(body, m.viewOverlayPicker(), bodyWidth, contentHeight)
 	} else if m.mode == modeConfirmDelete {
 		body = overlayBottomRight(body, m.viewConfirmDelete(), bodyWidth, contentHeight)
 	} else if m.mode != modeNormal {
@@ -2045,8 +2219,12 @@ func (m model) shortcutHint() string {
 	// An unsaved change owns the hint bar: it is the only thing that needs
 	// doing, and the keys that resolve it must not compete with 20 others.
 	if m.pending != nil {
-		return " UNSAVED " + m.pending.label() + " on \"" + truncate(m.pending.title, 30) +
-			"\"  |  s SAVE to Google  |  esc discard  |  )( }{ >< keep adjusting "
+		// The delta alone ("+1d") does not say what the event ENDS UP as, and
+		// the before → after line lives in the detail pane, which a narrow
+		// window does not show. `s` writes to other people's calendars, so the
+		// resulting time belongs on the bar that names the key.
+		return " UNSAVED " + m.pending.label() + ": " + m.pending.diffLine(m.tz()) +
+			"  |  s SAVE to Google  |  esc discard  |  )( }{ >< keep adjusting "
 	}
 	// Focus inside the docked active panel: show the panel's own keys, but keep
 	// naming tab/a so it never feels like a trap.
@@ -2073,13 +2251,20 @@ func (m model) shortcutHint() string {
 			act = "tab->panel | a close"
 		}
 		if m.view != viewList {
-			return " h/l +/-day | j/k +/-week | g->list | M month-grid | n now | " + act + " | e calendar | A attendees | L links | y copy | E edit | X del | N new | Z tz | / | ? | q "
+			return " h/l +/-day | j/k +/-week | g->list | M month-grid | n now | " + act + " | e calendar | O overlay | A attendees | L links | y copy | E edit | X del | N new | f find-a-time | Z tz | / | ? | q "
 		}
-		return " h/l move(step) | d/w/m step | j/k select | n now | t timeline | " + act + " | e calendar | g grid | N new | E edit | X del | y copy | )( ±15m | }{ resize | >< ±day → s saves | D dup | u undo | ↵ open | / | ? | q "
+		return " h/l move(step) | d/w/m step | j/k select | n now | t timeline | " + act + " | e calendar | O overlay | g grid | N new | f find-a-time | E edit | X del | y copy | )( ±15m | }{ resize | >< ±day → s saves | D dup | u undo | ↵ open | / | ? | q "
 	case modeCreate:
 		return " new/edit event  |  type to edit  |  Enter save  |  Tab/S-Tab field  |  ESC back  |  Space toggle attendee "
 	case modeConfirmDelete:
 		return " delete event?  |  y/Enter confirm  |  N/ESC cancel "
+	case modeOverlayPicker:
+		return " overlay calendars  |  type to filter  |  space toggle  |  Enter apply (none = off)  |  ESC cancel "
+	case modeFindTime:
+		if m.find.step == findPeople {
+			return " find a time · who?  |  type to filter  |  space toggle  |  Enter find slots  |  ESC cancel "
+		}
+		return " find a time  |  j/k move  |  Enter prefill new event  |  d length  |  w weekends  |  H hours  |  R refresh  |  ESC back to who "
 	}
 }
 
@@ -2224,6 +2409,11 @@ func (m model) viewGrid(width, height int) string {
 					txt = " " + truncate(mark+tm+ev.Title, inner-1)
 					if mark == "!" {
 						txt = pendingStyle.Render(txt)
+					} else if c := m.overlayColorFor(ev.Calendar); c != "" {
+						// The grid has no room for a name, so the owner color IS
+						// the identification — without it a merged month grid is
+						// an undifferentiated wall of titles.
+						txt = lipgloss.NewStyle().Foreground(lipgloss.Color(c)).Render(txt)
 					}
 				}
 				cell := padRightW(txt, colW)
@@ -2274,7 +2464,7 @@ func (m model) viewAgendaCards(width, height int) string {
 	var buckets map[string][]*Event
 	peak := 0
 	if !m.timelineHidden {
-		cols = timelineCols(innerWidth)
+		cols = timelineColsWithReserve(innerWidth, m.overlayRowReserve())
 		if cols > 0 {
 			buckets = m.dayBuckets()
 			peak = m.timelinePeak(buckets, cols)
@@ -2418,6 +2608,19 @@ func (m model) eventRow(ev *Event, selected bool, width int, dayStart time.Time,
 		textW = width - cols - 1
 	}
 	titleRoom := max(6, textW-lipgloss.Width(tl)-lipgloss.Width(badges)-4)
+	// While an overlay is on, every row has to say WHOSE event it is — a merged
+	// agenda where the rows are indistinguishable is worse than two separate
+	// ones. The tag is styled separately and prepended to the title so the row
+	// state styles (selected/pending) don't overwrite the owner color.
+	tag := ""
+	if m.overlay.on() {
+		// A zero name width is the narrow-pane fallback (dot only), not "no
+		// tag": the row still has to say whose event it is.
+		tag = m.overlayTag(ev, m.overlayNameWidth())
+		if tag != "" {
+			titleRoom = max(6, titleRoom-lipgloss.Width(tag))
+		}
+	}
 	title := truncate(ev.Title, titleRoom)
 	// text is the styled left part; it is padded and the bar appended after,
 	// because embedding the bar inside a single Render would inject the row
@@ -2425,13 +2628,13 @@ func (m model) eventRow(ev *Event, selected bool, width int, dayStart time.Time,
 	var text string
 	switch {
 	case selected && pending != nil:
-		text = pendingStyle.Render(fmt.Sprintf("▸ %s %s%s", tl, title, badges))
+		text = pendingStyle.Render(fmt.Sprintf("▸ %s ", tl)) + tag + pendingStyle.Render(title+badges)
 	case selected:
-		text = selectedRowStyle.Render(fmt.Sprintf("▸ %s %s%s", tl, title, badges))
+		text = selectedRowStyle.Render(fmt.Sprintf("▸ %s ", tl)) + tag + selectedRowStyle.Render(title+badges)
 	case pending != nil:
-		text = "  " + pendingStyle.Render(tl+" "+title+badges)
+		text = "  " + pendingStyle.Render(tl+" ") + tag + pendingStyle.Render(title+badges)
 	default:
-		text = "  " + timePillMini.Render(tl) + " " + title + mutedStyle.Render(badges)
+		text = "  " + timePillMini.Render(tl) + " " + tag + title + mutedStyle.Render(badges)
 	}
 	if bar == "" {
 		return text
@@ -2448,7 +2651,7 @@ func (m model) agendaStartIndex(height int) int {
 	// when the timeline is drawn. Miscounting the header cost pushes the
 	// selection off its intended position as days scroll past.
 	headerCost := 1
-	if !m.timelineHidden && timelineCols(max(20, m.schedulePaneWidth()-1)) > 0 {
+	if !m.timelineHidden && timelineColsWithReserve(max(20, m.schedulePaneWidth()-1), m.overlayRowReserve()) > 0 {
 		headerCost = 2
 	}
 	// Keep selected around the upper-middle so there's context above and room
@@ -2762,7 +2965,19 @@ func (m model) viewCreate() string {
 		formTitle = "Edit event"
 	}
 	lines = append(lines, sectionTitleStyle.Render(fmt.Sprintf(" %s | %s ", formTitle, stepName)))
-	lines = append(lines, mutedStyle.Render("on "+m.calendarDisplayName()))
+	// The form writes to c.calendar when editing an overlay row, so the header
+	// has to name that calendar rather than the one currently open.
+	formCal := m.calendarDisplayName()
+	if c.editing && c.calendar != "" {
+		formCal = displayNameForCalendar(c.calendar)
+	}
+	if m.overlay.on() {
+		// The header reads "3 calendars" during an overlay, so the form is the
+		// only place that can say which single one this write lands on.
+		lines = append(lines, mutedStyle.Render("on ")+errorStyle.Render(formCal))
+	} else {
+		lines = append(lines, mutedStyle.Render("on "+formCal))
+	}
 	// Onboarding hint: show the shorthand summary once, right after the form
 	// opens, so the user sees what they can type before touching a field. It
 	// disappears as soon as the title is filled (the per-field inline hints
@@ -2876,8 +3091,20 @@ func (m model) viewCreate() string {
 	if rules := c.recurrenceRules(); len(rules) > 0 {
 		lines = append(lines, mutedStyle.Render("repeats "+describeRepeat(c.repeat)))
 	}
-	if len(atts) > 0 {
-		lines = append(lines, errorStyle.Render(fmt.Sprintf("⚠ invitation emails will be sent to %d people", len(atts))))
+	// Warn while typing, not only at the confirm step: a date that resolved to
+	// last week is easiest to fix in the field it came from, and the preview
+	// line alone does not make "Aug 01" register as wrong in September.
+	for _, w := range m.submitWarnings(c, time.Now()) {
+		lines = append(lines, warnStyle.Render("⚠ "+truncate(w, max(4, inner-4))))
+	}
+	if n := c.notifiesAttendees(); n > 0 {
+		// Editing mails the whole resulting attendee list plus anyone removed,
+		// not just the people added — notifiesAttendees is what knows that.
+		verb := "invitation emails will be sent to"
+		if c.editing {
+			verb = "update emails will be sent to"
+		}
+		lines = append(lines, errorStyle.Render(fmt.Sprintf("⚠ %s %d %s", verb, n, plural(n, "person", "people"))))
 	}
 	if c.submitting {
 		lines = append(lines, statusStyle.Render("creating~"))
@@ -2904,7 +3131,17 @@ func (m model) viewConfirmDelete() string {
 	lines = append(lines, "")
 	if ev != nil {
 		lines = append(lines, pillStyle.Render(m.timeLabel(ev))+" "+truncate(ev.Title, max(10, w-16)))
-		lines = append(lines, mutedStyle.Render(m.viewDate(ev).Format("Mon Jan 02")+" | "+m.calendarDisplayName()))
+		// Name the calendar the delete will actually hit, not the one that
+		// happens to be open: in an overlay these differ, and showing your own
+		// name while deleting a colleague's event is exactly backwards.
+		owner := displayNameForCalendar(m.eventCalendar(ev))
+		ownerLine := m.viewDate(ev).Format("Mon Jan 02") + " | " + owner
+		if m.overlay.on() {
+			lines = append(lines, mutedStyle.Render(m.viewDate(ev).Format("Mon Jan 02")+" | on ")+
+				errorStyle.Render(owner))
+		} else {
+			lines = append(lines, mutedStyle.Render(ownerLine))
+		}
 		if n := len(ev.Attendees); n > 0 {
 			lines = append(lines, errorStyle.Render(fmt.Sprintf("⚠ cancellation notice will be sent to %d people", n)))
 		}
@@ -3084,27 +3321,7 @@ func (m model) viewPopup() string {
 	}
 
 	if m.mode == modeConfirmSubmit {
-		ev := m.currentActionEvent()
-		title := "Create event"
-		if m.create.editing {
-			title = "Edit event"
-		}
-		w, h := m.popupSize(8)
-		var lines []string
-		lines = append(lines, sectionTitleStyle.Render(fmt.Sprintf(" %s? ", title)))
-		lines = append(lines, "")
-		if ev != nil || !m.create.editing {
-			lines = append(lines, pillStyle.Render("(no event selected)"))
-		} else {
-			lines = append(lines, pillStyle.Render(strings.TrimSpace(m.create.title)))
-			lines = append(lines, mutedStyle.Render(m.create.previewLine(m.tz(), m.tzLabel(), time.Now())))
-			if n := len(m.create.attendees); n > 0 {
-				lines = append(lines, errorStyle.Render(fmt.Sprintf("⚠ invitation emails will be sent to %d people", n)))
-			}
-		}
-		lines = append(lines, "")
-		lines = append(lines, mutedStyle.Render("y/Enter %s  |  n/ESC back to form", strings.ToLower(title)))
-		return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
+		return m.viewConfirmSubmit()
 	}
 
 	if m.mode == modeSearch {
@@ -3250,6 +3467,11 @@ func (m model) openPrimary() tea.Cmd {
 }
 
 func (m model) loadCmd(reqID int) tea.Cmd {
+	// An overlay loads several calendars into the same list; everything
+	// downstream (views, search, timeline) reads m.events either way.
+	if m.overlay.on() {
+		return m.loadOverlayCmd(reqID)
+	}
 	calendar := m.calendar
 	start, end := m.loadRange()
 	return func() tea.Msg {
@@ -3701,6 +3923,20 @@ func helpLines() []string {
 		"        window · a closes it. The header shows the live count.",
 		"e       CALENDAR SWITCHER: fuzzy pick across recent *, subscribed,",
 		"        and aliases; type a raw email/id to open one directly",
+		"        (picking one here turns an overlay off — you asked for that",
+		"        single calendar)",
+		"O       OVERLAY several calendars into ONE agenda. Every row gains a",
+		"        color dot + the owner's name, and the 24h timeline bars are",
+		"        tinted per person, so the shared axis shows not just THAT two",
+		"        events overlap but WHOSE they are. Every existing view works",
+		"        on the merged set: list, grids, /, the a panel, t timeline.",
+		"        The legend under the agenda maps color -> person and prints",
+		"        each one's event count; a calendar that could not be read is",
+		"        shown hollow with the reason, so it never passes for an empty",
+		"        one. E/X/D/W and the )( }{ >< moves act on the SELECTED ROW'S",
+		"        calendar (its owner is named in the confirm step); N still",
+		"        creates on the calendar you have open. Enter with nothing",
+		"        picked turns the overlay back off.",
 		"Common  n jump to now (today, else nearest upcoming) | R refresh | Z timezone (" + tzHint + ")",
 		"Open    Enter opens the Google Calendar event page",
 		"L       other links picker (zoom, docs, ~) (fuzzy)",
@@ -3708,8 +3944,28 @@ func helpLines() []string {
 		"y...    copy selected event: yy summary | yu calendar URL",
 		"        ys start | ye end | yd description (OSC 52 clipboard)",
 		"N       new event | E edit selected | X delete (confirm)",
+		"        Both route through a confirm step before anything reaches",
+		"        Google. Creating shows the resolved time, endless recurrence,",
+		"        and how many people get mail; EDITING shows only what CHANGES",
+		"        (old -> new), with time moves and attendee add/removes marked !.",
+		"        A start in the past, a >=8h or <5m duration, and an unchanged",
+		"        edit are all called out — none of them are blocked, since each",
+		"        has a real use, but none of them should happen by accident.",
+		"f       FIND A TIME across several people: pick who is coming (space",
+		"        toggles, type a full email to add someone not on screen), then",
+		"        Enter reads everyone's free/busy and ranks the open slots.",
+		"        Everyone-free slots come first (green ✓4/4); partial ones stay",
+		"        in the list (amber 3/4) and name who is blocked — a 3/4 slot at",
+		"        a good hour often beats no slot at all. `?` after a badge counts",
+		"        people whose free/busy is not readable: they are neither counted",
+		"        free nor busy. Enter prefills the new-event form with that slot",
+		"        and those attendees, so nothing is mailed until you submit it.",
+		"        In the slot list: d cycles the meeting length · w toggles",
+		"        weekends · H opens the day up to 24h · R re-reads · esc goes",
+		"        back to the participant picker.",
 		"Time    ) / ( move start +/-15m | } / { lengthen/shorten 15m",
-		"        > / < move to next/prev day",
+		"        > / < move to next/prev CALENDAR day (the wall-clock time is",
+		"        kept, so a move across a DST boundary stays at 10:00)",
 		"        These only change the VIEW: the new time shows with a ! marker",
 		"        and the bar turns amber. Nothing reaches Google until you press:",
 		"s       SAVE the staged time change   |   esc  discard it",

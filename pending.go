@@ -30,8 +30,17 @@ type pendingShift struct {
 	// patch on save.
 	startDelta time.Duration
 	endDelta   time.Duration
-	origStart  time.Time
-	origEnd    time.Time
+	// dayDelta counts whole CALENDAR days moved with > / <, kept separate from
+	// the duration deltas on purpose. Adding 24h across a DST boundary moves a
+	// 10:00 meeting to 11:00 — "next day, same time" is calendar arithmetic, not
+	// a fixed number of hours, so it has to be applied with AddDate.
+	dayDelta int
+	// loc is the timezone the day move is evaluated in (the display tz at the
+	// time of the nudge). AddDate on a UTC instant would shift the wrong day
+	// boundary for a user reading the calendar in KST.
+	loc       *time.Location
+	origStart time.Time
+	origEnd   time.Time
 	// patchEvent replaces the whole event, so the fields we are not touching
 	// have to be echoed back on commit or they would be cleared.
 	location    string
@@ -43,17 +52,36 @@ type pendingShift struct {
 	saving bool
 }
 
-func (p *pendingShift) start() time.Time { return p.origStart.Add(p.startDelta) }
-func (p *pendingShift) end() time.Time   { return p.origEnd.Add(p.endDelta) }
+// start/end apply the staged change to the event's original times: whole days
+// first (as calendar days, so the wall-clock time survives a DST boundary),
+// then the minute-level deltas.
+func (p *pendingShift) start() time.Time { return p.shift(p.origStart, p.startDelta) }
+func (p *pendingShift) end() time.Time   { return p.shift(p.origEnd, p.endDelta) }
+
+func (p *pendingShift) shift(t time.Time, delta time.Duration) time.Time {
+	if p.dayDelta != 0 {
+		loc := p.loc
+		if loc == nil {
+			loc = time.Local
+		}
+		t = t.In(loc).AddDate(0, 0, p.dayDelta)
+	}
+	return t.Add(delta)
+}
 
 // empty reports whether the staged deltas cancelled out (nudged back to the
 // saved time), in which case there is nothing left to save.
-func (p *pendingShift) empty() bool { return p.startDelta == 0 && p.endDelta == 0 }
+func (p *pendingShift) empty() bool {
+	return p.startDelta == 0 && p.endDelta == 0 && p.dayDelta == 0
+}
 
 // label summarizes the staged change as a move plus a duration change, e.g.
 // "+1d", "+45m", "+15m, 30m longer".
 func (p *pendingShift) label() string {
 	var parts []string
+	if p.dayDelta != 0 {
+		parts = append(parts, signedDays(p.dayDelta))
+	}
 	if p.startDelta != 0 {
 		parts = append(parts, signedDuration(p.startDelta))
 	}
@@ -92,6 +120,14 @@ func (p *pendingShift) diffLine(loc *time.Location) string {
 	return before + " -> " + after
 }
 
+// signedDays renders a whole-day move: "+1d", "-2d".
+func signedDays(n int) string {
+	if n < 0 {
+		return fmt.Sprintf("-%dd", -n)
+	}
+	return fmt.Sprintf("+%dd", n)
+}
+
 // signedDuration renders a delta with its direction: "+1d", "-15m", "+1d2h".
 func signedDuration(d time.Duration) string {
 	sign := "+"
@@ -119,11 +155,14 @@ func humanDuration(d time.Duration) string {
 // stagePending folds another nudge into the staged change for ev and returns the
 // status line to show. Rejections (all-day, zero duration, a different event
 // already staged) are reported as status text — nothing is sent to Google here.
-func (m *model) stagePending(ev *Event, startDelta, endDelta time.Duration) string {
+//
+// days is a whole-CALENDAR-day move (> / <), applied separately from the
+// minute-level deltas so "next day, same time" survives a DST boundary.
+func (m *model) stagePending(ev *Event, startDelta, endDelta time.Duration, days int) string {
 	if ev.AllDay() {
 		return "all-day events cannot be nudged"
 	}
-	if m.pending != nil && (m.pending.eventID != ev.ID || m.pending.calendar != m.calendar) {
+	if m.pending != nil && (m.pending.eventID != ev.ID || m.pending.calendar != m.eventCalendar(ev)) {
 		return "unsaved change on \"" + m.pending.title + "\" — s to save or esc to discard first"
 	}
 
@@ -144,7 +183,9 @@ func (m *model) stagePending(ev *Event, startDelta, endDelta time.Duration) stri
 			}
 		}
 		next = pendingShift{
-			calendar:    m.calendar,
+			// An overlay row belongs to its own calendar; staging against
+			// m.calendar would patch the wrong one on save.
+			calendar:    m.eventCalendar(ev),
 			eventID:     ev.ID,
 			title:       title,
 			origStart:   ev.StartAt,
@@ -152,11 +193,13 @@ func (m *model) stagePending(ev *Event, startDelta, endDelta time.Duration) stri
 			location:    ev.Location,
 			description: ev.Description,
 			attendees:   atts,
+			loc:         m.tz(),
 		}
 	}
 
 	next.startDelta += startDelta
 	next.endDelta += endDelta
+	next.dayDelta += days
 	if !next.end().After(next.start()) {
 		return "duration would be zero or negative"
 	}
@@ -231,7 +274,7 @@ func (m model) pendingFor(ev *Event) *pendingShift {
 	if m.pending == nil || ev == nil || ev.ID == "" {
 		return nil
 	}
-	if m.pending.eventID != ev.ID || m.pending.calendar != m.calendar {
+	if m.pending.eventID != ev.ID || m.pending.calendar != m.eventCalendar(ev) {
 		return nil
 	}
 	return m.pending
