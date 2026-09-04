@@ -314,6 +314,36 @@ upcoming events in the given window.
 
 ## Keyboard guide
 
+### The hint bar shows only what applies
+
+The bottom bar is assembled from the keys that would actually do something in
+the current state, not from every key the app has. `E`/`X`/`y` appear once an
+event is selected; `A` and `L` only when that event has attendees or links;
+`t` only in the list view; `u` only when there is something to undo.
+
+`? help` and `q quit` are pinned to the right and are never dropped. When the
+window is still too narrow, whole hints are removed lowest-priority first
+rather than the line being cut mid-word — a hint reading `E ed` teaches
+nothing.
+
+```text
+ (empty calendar)
+ h/l day  j/k select  n now  N new  e calendar  f find-a-time  / search   |  ? help  q quit
+
+ (event selected, with attendees and links)
+ h/l day  j/k select  n now  ret open  E edit  X del  y copy  A attendees  L links  …  |  ? help  q quit
+
+ (narrow window)
+ h/l day  j/k select  n now  ret open   |  ? help  q quit
+```
+
+A staged time change takes the whole bar, and what it would write stays pinned
+there — `s` sends it to other people's calendars, so the resulting time must not
+be the part that scrolls off.
+
+`?` remains the complete reference: keys the bar omits (`M`, `Z`, `R`, `D`/`W`,
+`tab`) are all listed there.
+
 ### Global
 
 - `q` — quit (refused while a time change is unsaved — see below)

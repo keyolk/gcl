@@ -118,26 +118,35 @@ func TestEventRowShowsStagedTimeWithMarker(t *testing.T) {
 func TestHintBarBecomesUnsavedBanner(t *testing.T) {
 	start := time.Date(2026, 7, 15, 10, 0, 0, 0, time.Local)
 	m := model{
+		width:    200,
 		calendar: "me",
 		view:     viewList,
+		jumpUnit: "day",
 		events: []Event{{
 			ID: "evt1", Title: "Standup", StartAt: start, EndAt: start.Add(30 * time.Minute),
 			StartDate: start, StartTime: "10:00",
 		}},
 	}
 	normal := m.shortcutHint()
-	for _, want := range []string{"a active", "e calendar", "s saves"} {
+	for _, want := range []string{"e calendar", "E edit", "move/resize"} {
 		if !strings.Contains(normal, want) {
 			t.Errorf("normal hint missing %q: %q", want, normal)
 		}
 	}
 
+	// A staged change takes the whole bar: the keys that resolve it must not
+	// compete with twenty others, and WHAT is unsaved has to stay visible
+	// because `s` writes it to other people's calendars.
 	mm, _, _ := m.handleQuickAction(")")
 	staged := mm.(model).shortcutHint()
 	for _, want := range []string{"UNSAVED", "+15m", "s SAVE", "esc discard"} {
 		if !strings.Contains(staged, want) {
 			t.Errorf("unsaved hint missing %q: %q", want, staged)
 		}
+	}
+	// The normal keys are gone while something is staged.
+	if strings.Contains(staged, "e calendar") {
+		t.Errorf("the unsaved bar still carries ordinary navigation: %q", staged)
 	}
 }
 

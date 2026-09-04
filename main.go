@@ -1208,7 +1208,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.yankPending = true
-		m.status = yankHint
+		// The hint bar already spells out the y-combinations; repeating them in
+		// the status line said the same thing twice on adjacent rows.
+		m.status = "copy what?"
 	case "t":
 		// The timeline is the only thing on the row that costs horizontal
 		// space, so it has to be switchable off when a long title matters more
@@ -2214,57 +2216,103 @@ func ansiTruncateTail(s string, width int) string {
 
 func (m model) shortcutHint() string {
 	if m.yankPending && m.mode == modeNormal {
-		return " " + yankHint + " "
+		return renderHints(yankHints(), m.width)
 	}
 	// An unsaved change owns the hint bar: it is the only thing that needs
-	// doing, and the keys that resolve it must not compete with 20 others.
+	// doing, and the keys that resolve it must not compete with 20 others. The
+	// resulting time rides along because the delta alone ("+1d") does not say
+	// what the event ENDS UP as, and the before -> after line lives in the
+	// detail pane, which a narrow window does not show.
 	if m.pending != nil {
-		// The delta alone ("+1d") does not say what the event ENDS UP as, and
-		// the before → after line lives in the detail pane, which a narrow
-		// window does not show. `s` writes to other people's calendars, so the
-		// resulting time belongs on the bar that names the key.
-		return " UNSAVED " + m.pending.label() + ": " + m.pending.diffLine(m.tz()) +
-			"  |  s SAVE to Google  |  esc discard  |  )( }{ >< keep adjusting "
+		return renderHints([]hint{
+			{key: "UNSAVED", label: m.pending.label() + ": " + m.pending.diffLine(m.tz()), prio: prioPinned},
+			{key: "s", label: "SAVE to Google", prio: prioEscape},
+			{key: "esc", label: "discard", prio: prioEscape},
+			{key: ")(}{><", label: "keep adjusting", prio: prioExtra},
+		}, m.width)
 	}
 	// Focus inside the docked active panel: show the panel's own keys, but keep
 	// naming tab/a so it never feels like a trap.
 	if m.activePanelFocused() && m.mode == modeNormal {
-		return " ACTIVE PANEL  |  j/k move  |  Enter jump to it  |  E/X/L act on it  |  tab next pane  |  esc back to schedule  |  a close "
+		return renderHints([]hint{
+			{key: "ACTIVE", label: "panel", prio: prioNav},
+			{key: "j/k", label: "move", prio: prioNav},
+			{key: "ret", label: "jump to it", prio: prioAct},
+			{key: "E/X/L", label: "act on it", prio: prioExtra},
+			{key: "tab", label: "next pane", prio: prioExtra},
+			{key: "esc", label: "back", prio: prioEscape},
+			{key: "a", label: "close", prio: prioEscape},
+		}, m.width)
 	}
+	// Modal hints are already short and every key in them applies, so they are
+	// not filtered — only fitted, so a narrow pane drops a whole hint instead
+	// of slicing one in half.
+	fit := func(hs ...hint) string { return renderHints(hs, m.width) }
+	filter := hint{key: "type", label: "filter", prio: prioExtra}
+	move := hint{key: "up/dn", label: "move", prio: prioNav}
+	cancel := hint{key: "esc", label: "cancel", prio: prioEscape}
 	switch m.mode {
 	case modeSearch:
-		return " / fuzzy search  |  up/dn move  |  Enter jump  |  ESC cancel "
+		return fit(hint{key: "/", label: "search", prio: prioNav}, move,
+			hint{key: "ret", label: "jump", prio: prioAct}, cancel)
 	case modeCalendarPicker:
-		return " e calendar  |  type to filter  |  up/dn move  |  Enter open  |  ESC cancel "
+		return fit(hint{key: "e", label: "calendar", prio: prioNav}, filter, move,
+			hint{key: "ret", label: "open", prio: prioAct}, cancel)
 	case modeLinkPicker:
-		return " L links  |  type to filter  |  up/dn move  |  Enter open  |  ESC cancel "
+		return fit(hint{key: "L", label: "links", prio: prioNav}, filter, move,
+			hint{key: "ret", label: "open", prio: prioAct}, cancel)
 	case modeAttendeePicker:
-		return " A attendees  |  Enter -> open their calendar  |  up/dn move  |  ESC cancel "
+		return fit(hint{key: "A", label: "attendees", prio: prioNav}, move,
+			hint{key: "ret", label: "open their calendar", prio: prioAct}, cancel)
 	case modeHelp:
-		return " help  |  ESC / ? close "
+		return fit(hint{key: "help", prio: prioNav},
+			hint{key: "esc/?", label: "close", prio: prioEscape})
 	case modeFormHelp:
-		return " form help  |  ESC / ? close "
+		return fit(hint{key: "form help", prio: prioNav},
+			hint{key: "esc/?", label: "close", prio: prioEscape})
 	default:
-		// While the panel is open but unfocused, tab is the key that matters.
-		act := "a active"
-		if m.activeOpen {
-			act = "tab->panel | a close"
-		}
-		if m.view != viewList {
-			return " h/l +/-day | j/k +/-week | g->list | M month-grid | n now | " + act + " | e calendar | O overlay | A attendees | L links | y copy | E edit | X del | N new | f find-a-time | Z tz | / | ? | q "
-		}
-		return " h/l move(step) | d/w/m step | j/k select | n now | t timeline | " + act + " | e calendar | O overlay | g grid | N new | f find-a-time | E edit | X del | y copy | )( ±15m | }{ resize | >< ±day → s saves | D dup | u undo | ↵ open | / | ? | q "
+		// Built from what is actually usable right now, and fitted to the pane
+		// by dropping whole low-priority hints — see hints.go. The old bar named
+		// every key the app has (238 columns), so it was always truncated and
+		// what fell off was `?` and `q`.
+		return renderHints(m.normalHints(), m.width)
 	case modeCreate:
-		return " new/edit event  |  type to edit  |  Enter save  |  Tab/S-Tab field  |  ESC back  |  Space toggle attendee "
+		return fit(
+			hint{key: "form", prio: prioNav},
+			hint{key: "ret", label: "save", prio: prioAct},
+			hint{key: "tab", label: "field", prio: prioNav},
+			hint{key: "space", label: "toggle attendee", prio: prioExtra},
+			hint{key: "?", label: "help", prio: prioEscape},
+			hint{key: "esc", label: "back", prio: prioEscape},
+		)
+	case modeConfirmSubmit:
+		return fit(hint{key: "confirm?", prio: prioNav},
+			hint{key: "y/ret", label: "yes", prio: prioEscape},
+			hint{key: "n/esc", label: "back to form", prio: prioEscape})
 	case modeConfirmDelete:
-		return " delete event?  |  y/Enter confirm  |  N/ESC cancel "
+		return fit(hint{key: "delete?", prio: prioNav},
+			hint{key: "y/ret", label: "confirm", prio: prioEscape},
+			hint{key: "n/esc", label: "cancel", prio: prioEscape})
 	case modeOverlayPicker:
-		return " overlay calendars  |  type to filter  |  space toggle  |  Enter apply (none = off)  |  ESC cancel "
+		return fit(hint{key: "overlay", prio: prioNav}, filter, move,
+			hint{key: "space", label: "toggle", prio: prioAct},
+			hint{key: "ret", label: "apply (none = off)", prio: prioAct}, cancel)
 	case modeFindTime:
 		if m.find.step == findPeople {
-			return " find a time · who?  |  type to filter  |  space toggle  |  Enter find slots  |  ESC cancel "
+			return fit(hint{key: "who?", prio: prioNav}, filter, move,
+				hint{key: "space", label: "toggle", prio: prioAct},
+				hint{key: "ret", label: "find slots", prio: prioAct}, cancel)
 		}
-		return " find a time  |  j/k move  |  Enter prefill new event  |  d length  |  w weekends  |  H hours  |  R refresh  |  ESC back to who "
+		return fit(
+			hint{key: "slots", prio: prioNav},
+			hint{key: "j/k", label: "move", prio: prioNav},
+			hint{key: "ret", label: "prefill new event", prio: prioAct},
+			hint{key: "d", label: "length", prio: prioExtra},
+			hint{key: "w", label: "weekends", prio: prioExtra},
+			hint{key: "H", label: "hours", prio: prioExtra},
+			hint{key: "R", label: "refresh", prio: prioExtra},
+			hint{key: "esc", label: "back to who", prio: prioEscape},
+		)
 	}
 }
 
@@ -3901,6 +3949,9 @@ func helpLines() []string {
 		tzHint = "local"
 	}
 	return []string{
+		"The bottom bar only names keys that would do something right now, so",
+		"this list is the complete one — M, Z, R, D/W and tab live here.",
+		"",
 		"Views   list (agenda) | g week-grid | M month-grid | g back to list",
 		"List    h/l move by step | d/w/m set step (day/week/month) | j/k select",
 		"Grid    h/l +/-day | j/k +/-week | focus cursor only; calendar stays put",
