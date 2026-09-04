@@ -10,8 +10,12 @@ import (
 )
 
 // overlayEvent builds a timed event owned by a calendar, on a fixed test day.
+//
+// The year is deliberately far in the future: an "active now" event outranks
+// the owner tint on the bar (by design), so a fixture landing on the real
+// current clock would make the color assertions pass or fail by time of day.
 func overlayEvent(id, cal, title string, hour, mins int) Event {
-	s := time.Date(2026, 9, 4, hour, 0, 0, 0, time.Local)
+	s := time.Date(2099, 9, 4, hour, 0, 0, 0, time.Local)
 	e := s.Add(time.Duration(mins) * time.Minute)
 	return Event{
 		ID: id, Calendar: cal, Title: title,
@@ -24,7 +28,7 @@ func overlayEvent(id, cal, title string, hour, mins int) Event {
 func overlaidModel(width, height int) model {
 	m := model{
 		width: width, height: height, calendar: "gavin@x.com", view: viewList,
-		anchor: time.Date(2026, 9, 4, 0, 0, 0, 0, time.Local), jumpUnit: "day",
+		anchor: time.Date(2099, 9, 4, 0, 0, 0, 0, time.Local), jumpUnit: "day",
 	}
 	m.overlay.active = []string{"gavin@x.com", "jace.son@x.com", "yuna.kim@x.com"}
 	m.events = []Event{

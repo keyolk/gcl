@@ -10,7 +10,20 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const yankHint = "yank: y summary · u calendar URL · s start · e end · d description · esc cancel"
+// yankHints is the `y` prefix bar. `esc cancel` is pinned: it is how you get
+// out of a prefix you did not mean to start, and on a narrow pane a plain
+// string would have truncated exactly that.
+func yankHints() []hint {
+	return []hint{
+		{key: "yank", prio: prioNav},
+		{key: "y", label: "summary", prio: prioAct},
+		{key: "u", label: "calendar URL", prio: prioAct},
+		{key: "s", label: "start", prio: prioExtra},
+		{key: "e", label: "end", prio: prioExtra},
+		{key: "d", label: "description", prio: prioExtra},
+		{key: "esc", label: "cancel", prio: prioEscape},
+	}
+}
 
 type clipboardCopiedMsg struct {
 	label string
