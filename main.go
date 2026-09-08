@@ -780,6 +780,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ctrl+c quits from anywhere, ahead of every mode — including the create
+	// form and the pickers, which otherwise swallow keys. It bypasses the
+	// unsaved-nudge warning that `q` goes through: ctrl+c is the abort, and a
+	// staged nudge lives in memory only, so nothing on the calendar changes.
+	if msg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+
+	// Under a Korean input source the shortcut keys arrive as jamo (`q` → `ㅂ`).
+	// Rewrite them to the Latin key at the same physical position so shortcuts
+	// fire without switching the input source back. Skipped in text-entry modes,
+	// where the jamo is the intended input.
+	if !m.isInTextInput() {
+		msg = normalizeCJKKey(msg)
+	}
 	key := msg.String()
 
 	if m.mode == modeCreate {
@@ -848,7 +863,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Search overlay: fuzzy-jump across the loaded events.
 	if m.mode == modeSearch {
 		switch key {
-		case "esc", "ctrl+c":
+		case "esc":
 			m.mode = modeNormal
 			m.input = ""
 			m.searchIndex = 0
@@ -882,7 +897,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if key == " " || key == "space" {
 				m.input += " "
 				m.searchIndex = 0
-			} else if len(key) == 1 {
+			} else if isTypedRune(msg) {
 				m.input += msg.String()
 				m.searchIndex = 0
 			}
@@ -894,7 +909,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeCalendarPicker || m.mode == modeLinkPicker || m.mode == modeAttendeePicker {
 		items := m.picker.filtered(m.input)
 		switch key {
-		case "esc", "ctrl+c":
+		case "esc":
 			m.mode = modeNormal
 			m.input = ""
 			return m, nil
@@ -928,7 +943,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if key == " " || key == "space" {
 				m.input += " "
 				m.picker.index = 0
-			} else if len(key) == 1 {
+			} else if isTypedRune(msg) {
 				m.input += msg.String()
 				m.picker.index = 0
 			}
@@ -1030,9 +1045,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
-	case "q", "ctrl+c":
+	case "q":
 		// Quitting with an unsaved nudge would silently throw it away. Ask for
-		// an explicit discard (esc) or save (s) first.
+		// an explicit discard (esc) or save (s) first. ctrl+c is the abort and
+		// does not ask -- it is handled at the top of handleKey.
 		if m.pending != nil {
 			m.status = "unsaved " + m.pending.label() + " on \"" + m.pending.title + "\" — s to save, esc to discard, then q"
 			return m, nil
@@ -1512,11 +1528,6 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	c := &m.create
 
-	if key == "ctrl+c" {
-		m.mode = modeNormal
-		return m, nil
-	}
-
 	// `?` inside the form opens the form-specific help overlay (not the global
 	// one), so the user can discover field navigation, flexible input, and
 	// quick actions while composing.
@@ -1620,7 +1631,7 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		default:
 			if key == " " || key == "space" {
 				*field += " "
-			} else if len(key) == 1 {
+			} else if isTypedRune(msg) {
 				*field += msg.String()
 				if c.step == stepLocation {
 					c.locCandidx = 0
@@ -1670,7 +1681,7 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				c.attCandidx = 0
 			}
 		default:
-			if len(key) == 1 {
+			if isTypedRune(msg) {
 				c.attInput += msg.String()
 				c.attCandidx = 0
 			}
@@ -4028,7 +4039,7 @@ func helpLines() []string {
 		"        repeat: daily/weekly/biweekly/monthly/weekdays (+ x4 for 4 times)",
 		"        location: ctrl+n/ctrl+p cycle suggestions, ctrl+y accept",
 		"/       fuzzy search across loaded events, Enter jumps",
-		"q       quit  |  ESC backs out of any overlay",
+		"q       quit (ctrl+c quits from anywhere)  |  ESC backs out of any overlay",
 		"",
 		"Aliases defined in " + configPath() + " ([aliases] section)",
 	}

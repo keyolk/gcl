@@ -15,6 +15,8 @@ func keyMsg(key string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEscape}
+	case "ctrl+c":
+		return tea.KeyMsg{Type: tea.KeyCtrlC}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}

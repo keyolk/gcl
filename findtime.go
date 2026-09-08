@@ -182,11 +182,6 @@ func (m model) handleFindKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	f := &m.find
 
-	if key == "ctrl+c" {
-		m.mode = modeNormal
-		return m, nil
-	}
-
 	if f.step == findPeople {
 		cands := filterPickerItems(f.cands, f.input)
 		switch key {
@@ -220,7 +215,7 @@ func (m model) handleFindKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				f.candIdx = 0
 			}
 		default:
-			if len(key) == 1 {
+			if isTypedRune(msg) {
 				f.input += msg.String()
 				f.candIdx = 0
 			}
