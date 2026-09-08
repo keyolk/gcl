@@ -304,10 +304,6 @@ func (m model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	o := &m.overlay
 
-	if key == "ctrl+c" {
-		m.mode = modeNormal
-		return m, nil
-	}
 	cands := filterPickerItems(o.cands, o.input)
 	switch key {
 	case "esc":
@@ -354,7 +350,7 @@ func (m model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			o.candIdx = 0
 		}
 	default:
-		if len(key) == 1 {
+		if isTypedRune(msg) {
 			o.input += msg.String()
 			o.candIdx = 0
 		}

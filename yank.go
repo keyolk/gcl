@@ -35,7 +35,7 @@ type clipboardCopiedMsg struct {
 // two-key command families.
 func (m model) handleYankKey(key string) (tea.Model, tea.Cmd) {
 	m.yankPending = false
-	if key == "esc" || key == "ctrl+c" {
+	if key == "esc" {
 		m.status = "yank cancelled"
 		return m, nil
 	}
