@@ -11,7 +11,7 @@ import (
 )
 
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.loadCmd(m.inflightReq), clockTickCmd()}
+	cmds := []tea.Cmd{m.loadCmd(m.inflightReq), clockTickCmd(), loadRecentsCmd}
 	if settings.notify {
 		cmds = append(cmds, notifyTickCmd())
 	}
@@ -143,6 +143,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = fmt.Sprintf("%d events across %d calendars",
 				len(m.events), len(m.overlay.active))
+		}
+		return m, nil
+	case recentsMsg:
+		// A pick made before the file was read stays in front.
+		m.recents = mergeRecents(m.recents, msg.list)
+		return m, nil
+	case recentsSavedMsg:
+		if msg.err != nil {
+			// The switch itself worked; only the recents list is stale.
+			m.status = msg.err.Error()
 		}
 		return m, nil
 	case statusMsg:

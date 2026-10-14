@@ -378,7 +378,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchIndex = 0
 	case "e":
 		m.mode = modeCalendarPicker
-		m.picker = pickerState{title: "Calendar - type to filter, Enter to open", kind: pickerCalendar, items: calendarPickerItems()}
+		m.picker = pickerState{title: "Calendar - type to filter, Enter to open", kind: pickerCalendar, items: calendarPickerItems(m.recents)}
 		m.input = ""
 	case "N":
 		m.mode = modeCreate

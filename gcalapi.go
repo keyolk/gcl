@@ -9,9 +9,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Google Calendar access reusing gcalcli's stored OAuth credentials.
@@ -533,26 +536,58 @@ func loadRecentCalendars() []string {
 	return out
 }
 
-// rememberCalendar prepends value to the recent list (dedup, cap 30).
-func rememberCalendar(value string) error {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
+// loadRecentsCmd reads the recents list off the UI loop.
+func loadRecentsCmd() tea.Msg { return recentsMsg{list: loadRecentCalendars()} }
+
+// saveRecentsCmd writes list off the UI loop. withRecent never reuses a slice,
+// so list cannot change while the write runs.
+func saveRecentsCmd(list []string) tea.Cmd {
+	return func() tea.Msg { return recentsSavedMsg{err: saveRecentCalendars(list)} }
+}
+
+// mergeRecents keeps cur (picks made since startup) in front of the list read
+// from disk.
+func mergeRecents(cur, loaded []string) []string {
+	out := append([]string(nil), cur...)
+	for _, r := range loaded {
+		if !slices.Contains(out, r) {
+			out = append(out, r)
+		}
 	}
-	recent := loadRecentCalendars()
-	next := []string{value}
-	for _, r := range recent {
+	if len(out) > maxRecentCalendars {
+		out = out[:maxRecentCalendars]
+	}
+	return out
+}
+
+// maxRecentCalendars caps the recents list kept on disk and in the model.
+const maxRecentCalendars = 30
+
+// withRecent returns list with value moved to the front (dedup, capped). It
+// always allocates, so a slice a pending save captured is never written again.
+func withRecent(list []string, value string) []string {
+	value = strings.TrimSpace(value)
+	next := make([]string, 0, len(list)+1)
+	if value != "" {
+		next = append(next, value)
+	}
+	for _, r := range list {
 		if r != value {
 			next = append(next, r)
 		}
 	}
-	if len(next) > 30 {
-		next = next[:30]
+	if len(next) > maxRecentCalendars {
+		next = next[:maxRecentCalendars]
 	}
+	return next
+}
+
+// saveRecentCalendars writes the recents list, most recent first.
+func saveRecentCalendars(list []string) error {
 	if err := os.MkdirAll(cacheDir(), 0o755); err != nil {
 		return fmt.Errorf("save recent calendars: %w", err)
 	}
-	if err := os.WriteFile(recentCalendarsPath(), []byte(strings.Join(next, "\n")+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(recentCalendarsPath(), []byte(strings.Join(list, "\n")+"\n"), 0o644); err != nil {
 		return fmt.Errorf("save recent calendars: %w", err)
 	}
 	return nil

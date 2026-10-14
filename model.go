@@ -153,6 +153,12 @@ type clockTickMsg struct{}
 
 type statusMsg string
 
+// recentsMsg delivers the recents list read at startup.
+type recentsMsg struct{ list []string }
+
+// recentsSavedMsg reports the write of the recents list after a pick.
+type recentsSavedMsg struct{ err error }
+
 type viewMode int
 
 const (
@@ -231,6 +237,10 @@ type model struct {
 	// installs, to be shown once that fetch lands. Without it, anything worth
 	// saying at the moment a reload is triggered is immediately overwritten.
 	pendingNote string
+	// recents is the recently-picked calendar list, most recent first. It is
+	// read from disk by a Cmd at startup (recentsMsg) and written back by a Cmd
+	// on every pick, so Update never touches the file itself.
+	recents []string
 }
 
 // createState holds the step-by-step new-event form.
@@ -428,3 +438,7 @@ type eventShiftedMsg struct {
 	// handler knows to clear the staged state. Duplicates leave it false.
 	committed bool
 }
+
+// statusText is the status line's text. Tests read it instead of the field so
+// they keep working when the status is a toast queue.
+func (m model) statusText() string { return m.status }

@@ -438,7 +438,7 @@ func (m model) attendeeCandidatePool() []pickerItem {
 		seen[strings.ToLower(email)] = true
 		out = append(out, pickerItem{label: email, value: email})
 	}
-	for _, r := range loadRecentCalendars() {
+	for _, r := range m.recents {
 		add(r)
 	}
 	for i := range m.events {

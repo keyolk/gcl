@@ -39,12 +39,10 @@ func (m model) choosePicker(it pickerItem) (tea.Model, tea.Cmd) {
 			// to survive until the load lands (see eventsMsg).
 			m.pendingNote = "overlay off · " + displayNameForCalendar(it.value)
 		}
-		if err := rememberCalendar(it.value); err != nil {
-			// The switch itself still works; only the recents list is stale.
-			// Ride pendingNote so the load's own status doesn't erase it.
-			m.pendingNote = joinNote(m.pendingNote, err.Error())
-		}
-		return m, m.reload()
+		// The pick is remembered in memory now and written by a Cmd; a write
+		// failure arrives as recentsSavedMsg.
+		m.recents = withRecent(m.recents, it.value)
+		return m, tea.Batch(m.reload(), saveRecentsCmd(m.recents))
 	}
 	m.mode = modeNormal
 	m.input = ""
@@ -66,7 +64,7 @@ func attendeeEmail(label string) string {
 
 // calendarPickerItems builds the `e` picker list: recently-used calendars first,
 // then subscribed calendars from calendarList (with ids), then static aliases.
-func calendarPickerItems() []pickerItem {
+func calendarPickerItems(recents []string) []pickerItem {
 	var items []pickerItem
 	seen := map[string]bool{}
 	add := func(label, value string) {
@@ -77,7 +75,7 @@ func calendarPickerItems() []pickerItem {
 		items = append(items, pickerItem{label: label, value: value})
 	}
 
-	for _, r := range loadRecentCalendars() {
+	for _, r := range recents {
 		label := "* " + r
 		if name := displayNameForCalendar(r); name != "" && name != r {
 			label = "* " + name
