@@ -97,8 +97,9 @@ func (m model) View() string {
 	headerLine := topBarStyle.Width(headerWidth).Render(ansiTruncateTail(headerContent, max(1, headerWidth-2)))
 
 	// The frame is header (1) + body + status (1) + hint (1); body must therefore
-	// be height-3 rows so the whole thing fills exactly m.height.
-	contentHeight := max(4, m.height-3)
+	// be height-3 rows so the whole thing fills exactly m.height. Each toast
+	// beyond the first takes one more row from the body (see statusRows).
+	contentHeight := max(4, m.height-2-m.statusRows())
 	bodyWidth := max(20, m.width-2)
 	// The docked active panel takes rows off the TOP of the body: "what is in
 	// effect now" belongs above "what is coming", and a top dock keeps the
@@ -172,7 +173,7 @@ func (m model) View() string {
 		body = overlayBottomRight(body, m.viewPopup(), bodyWidth, contentHeight)
 	}
 
-	statusLine := statusStyle.Render(truncate("  "+m.status, m.width))
+	statusLine := m.statusView()
 	// The hint bar turns amber while a change is staged, so an unsaved nudge is
 	// impossible to mistake for a saved one even at a glance.
 	barStyle := hintBarStyle

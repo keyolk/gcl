@@ -24,14 +24,6 @@ func (m *model) dropLoadedEvents() {
 	m.loadedEnd = time.Time{}
 }
 
-// joinNote appends note to an existing status note with the usual separator.
-func joinNote(existing, note string) string {
-	if existing == "" {
-		return note
-	}
-	return existing + " · " + note
-}
-
 // reload marks loading and returns the fetch command.
 func (m *model) reload() tea.Cmd {
 	return m.scheduleFetch()
@@ -42,8 +34,10 @@ func (m *model) reload() tea.Cmd {
 func (m *model) scheduleFetch() tea.Cmd {
 	m.nextReqID++
 	m.inflightReq = m.nextReqID
+	// No status note: the header's loading pill (or the first-load
+	// placeholder) says it, and a note here would replace whatever the key that
+	// triggered the reload just reported.
 	m.loading = true
-	m.status = "loading~"
 	return m.loadCmd(m.inflightReq)
 }
 
@@ -107,7 +101,7 @@ func (m *model) cycleFocus() {
 		order = append(order, focusActive)
 	}
 	if len(order) == 1 {
-		m.status = "nothing else to focus (a opens the active panel)"
+		m.say("nothing else to focus (a opens the active panel)")
 		return
 	}
 	at := 0
@@ -121,15 +115,15 @@ func (m *model) cycleFocus() {
 	switch m.focusPane {
 	case focusDetail:
 		m.clampGridDetail()
-		m.status = "focus: day detail"
+		m.say("focus: day detail")
 	case focusActive:
 		// Entering the panel puts the schedule selection on the cursor's event
 		// straight away, so the acting keys are consistent from the first frame.
 		m.clampActiveIndex()
 		m.syncSelectionToActive()
-		m.status = "focus: active panel · j/k move · Enter jump · esc back"
+		m.say("focus: active panel · j/k move · Enter jump · esc back")
 	default:
-		m.status = "focus: schedule"
+		m.say("focus: schedule")
 	}
 }
 
@@ -266,10 +260,13 @@ func (m *model) clampGridDetail() {
 
 // openPrimary always opens the Google Calendar event page. Other links (zoom,
 // docs, ~) are only reachable via the L links picker.
-func (m model) openPrimary() tea.Cmd {
+//
+// Pointer receiver: with a value receiver the two "nothing to open" notes
+// below were written to a copy and never shown.
+func (m *model) openPrimary() tea.Cmd {
 	ev := m.currentActionEvent()
 	if ev == nil {
-		m.status = "no event selected"
+		m.warn("no event selected")
 		return nil
 	}
 	if ev.HTMLLink != "" {
@@ -281,7 +278,7 @@ func (m model) openPrimary() tea.Cmd {
 			return openCmd(l)
 		}
 	}
-	m.status = "no Google Calendar link for this event (use L for other links)"
+	m.warn("no Google Calendar link for this event (use L for other links)")
 	return nil
 }
 

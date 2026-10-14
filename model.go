@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/keyolk/tuikit/toast"
 )
 
 // calendarAliases maps short names to a calendar email/id/display-name. It is
@@ -153,6 +155,10 @@ type clockTickMsg struct{}
 
 type statusMsg string
 
+// actionFailedMsg is an error from a Cmd that has no result type of its own
+// (opening a link). It is shown as a sticky error, statusMsg as a note.
+type actionFailedMsg string
+
 // recentsMsg delivers the recents list read at startup.
 type recentsMsg struct{ list []string }
 
@@ -185,7 +191,7 @@ type model struct {
 	events      []Event
 	selected    int
 	loading     bool
-	status      string
+	toasts      toast.Queue // the status line; see status.go
 	err         error
 	width       int
 	height      int
@@ -233,10 +239,6 @@ type model struct {
 	// merged into m.events and tagged by owner, so every existing view works on
 	// them unchanged. Empty active set == no overlay.
 	overlay overlayState
-	// pendingNote is a status message that must survive the "loading~" a fetch
-	// installs, to be shown once that fetch lands. Without it, anything worth
-	// saying at the moment a reload is triggered is immediately overwritten.
-	pendingNote string
 	// recents is the recently-picked calendar list, most recent first. It is
 	// read from disk by a Cmd at startup (recentsMsg) and written back by a Cmd
 	// on every pick, so Update never touches the file itself.
@@ -438,7 +440,3 @@ type eventShiftedMsg struct {
 	// handler knows to clear the staged state. Duplicates leave it false.
 	committed bool
 }
-
-// statusText is the status line's text. Tests read it instead of the field so
-// they keep working when the status is a toast queue.
-func (m model) statusText() string { return m.status }

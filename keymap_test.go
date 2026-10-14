@@ -195,7 +195,7 @@ func TestCtrlCQuitsPastAnUnsavedNudge(t *testing.T) {
 	if isQuit(cmd) {
 		t.Fatal("q quit with an unsaved nudge staged; it must warn first")
 	}
-	if same.(model).status == "" {
+	if same.(model).statusText() == "" {
 		t.Fatal("q left no explanation for refusing to quit")
 	}
 

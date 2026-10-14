@@ -111,7 +111,6 @@ func main() {
 		timelineHidden: !settings.timeline,
 		anchor:         anchor,
 		loading:        true,
-		status:         "loading~",
 		nextReqID:      1,
 		inflightReq:    1,
 	}

@@ -53,20 +53,21 @@ func TestSendToastWithoutSinkNeverPrints(t *testing.T) {
 // A reminder that could not be toasted is surfaced in the status line rather
 // than dropped; a scan error is shown rather than swallowed.
 func TestNotifyResultReachesStatus(t *testing.T) {
-	m := model{status: "loaded 3 events"}
+	m := model{}
+	m.say("loaded 3 events")
 	got, _ := m.Update(notifyResultMsg{fired: 1, shown: []string{"gcal: in 5m  standup"}})
-	if s := got.(model).status; !strings.Contains(s, "standup") {
+	if s := got.(model).statusText(); !strings.Contains(s, "standup") {
 		t.Errorf("status = %q, want the undelivered reminder", s)
 	}
 
 	got, _ = m.Update(notifyResultMsg{err: errors.New("token expired")})
-	if s := got.(model).status; !strings.Contains(s, "reminder failed") || !strings.Contains(s, "token expired") {
+	if s := got.(model).statusText(); !strings.Contains(s, "reminder failed") || !strings.Contains(s, "token expired") {
 		t.Errorf("status = %q, want the scan error", s)
 	}
 
 	// A quiet pass (nothing due) must not clobber whatever status is up.
 	got, _ = m.Update(notifyResultMsg{})
-	if s := got.(model).status; s != "loaded 3 events" {
+	if s := got.(model).statusText(); s != "loaded 3 events" {
 		t.Errorf("empty scan changed status to %q", s)
 	}
 }

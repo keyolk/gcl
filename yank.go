@@ -36,25 +36,25 @@ type clipboardCopiedMsg struct {
 func (m model) handleYankKey(key string) (tea.Model, tea.Cmd) {
 	m.yankPending = false
 	if key == "esc" {
-		m.status = "yank cancelled"
+		m.say("yank cancelled")
 		return m, nil
 	}
 	if m.currentActionEvent() == nil {
-		m.status = "no event selected"
+		m.warn("no event selected")
 		return m, nil
 	}
 
 	label, value, ok := m.yankValue(key)
 	if !ok {
-		m.status = "unknown yank key: " + key
+		m.warn("unknown yank key: " + key)
 		return m, nil
 	}
 	if value == "" {
-		m.status = "selected event has no " + label
+		m.warn("selected event has no " + label)
 		return m, nil
 	}
 
-	m.status = "copying " + label + "~"
+	m.say("copying " + label + "~")
 	return m, copyToClipboardCmd(label, value)
 }
 

@@ -377,7 +377,7 @@ func TestUndoKeyReportsNothingToUndo(t *testing.T) {
 	if cmd != nil {
 		t.Error("expected no command when there is nothing to undo")
 	}
-	if got := mm.(model).status; got != "nothing to undo" {
+	if got := mm.(model).statusText(); got != "nothing to undo" {
 		t.Errorf("status = %q, want 'nothing to undo'", got)
 	}
 }
@@ -414,8 +414,8 @@ func TestFailedSaveKeepsPendingForRetry(t *testing.T) {
 	if got.pending.saving {
 		t.Error("a failed save must clear the in-flight flag so s can retry")
 	}
-	if !strings.Contains(got.status, "retries") {
-		t.Errorf("status = %q, want it to offer a retry", got.status)
+	if !strings.Contains(got.statusText(), "retries") {
+		t.Errorf("status = %q, want it to offer a retry", got.statusText())
 	}
 	// Retry works.
 	if _, cmd, _ := got.handleQuickAction("s"); cmd == nil {
@@ -465,8 +465,8 @@ func TestQuitRefusedWhilePending(t *testing.T) {
 	if cmd != nil {
 		t.Error("q must not quit while a change is unsaved")
 	}
-	if !strings.Contains(mm.(model).status, "unsaved") {
-		t.Errorf("status = %q, want it to explain the refusal", mm.(model).status)
+	if !strings.Contains(mm.(model).statusText(), "unsaved") {
+		t.Errorf("status = %q, want it to explain the refusal", mm.(model).statusText())
 	}
 	// After discarding, q quits.
 	discarded, _, _ := mm.(model).handleQuickAction("esc")
@@ -618,7 +618,7 @@ func TestSaveWarnsThatAttendeesAreNotNotified(t *testing.T) {
 	if !handled {
 		t.Fatal("s was not handled while a change was staged")
 	}
-	got := updated.(model).status
+	got := updated.(model).statusText()
 	if !strings.Contains(got, "NOT notified") {
 		t.Errorf("status = %q, want it to say attendees are not notified", got)
 	}

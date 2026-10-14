@@ -336,14 +336,14 @@ func (m model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Past the palette every extra person reuses a color, and the dots
 			// stop identifying anyone. Refuse rather than render a lie.
 			m.mode = modeOverlayPicker
-			m.status = fmt.Sprintf("at most %d calendars can be told apart by color", len(overlayColors))
+			m.warn(fmt.Sprintf("at most %d calendars can be told apart by color", len(overlayColors)))
 			return m, nil
 		}
 		o.active = picked
 		o.failed = map[string]string{}
 		m.dropLoadedEvents()
 		m.loading = true
-		m.status = fmt.Sprintf("overlaying %d calendars~", len(picked))
+		m.say(fmt.Sprintf("overlaying %d calendars~", len(picked)))
 		return m, m.reload()
 	case "backspace", "ctrl+h":
 		if o.input != "" {
@@ -365,7 +365,7 @@ func (m *model) clearOverlay() tea.Cmd {
 	m.overlay.failed = nil
 	m.dropLoadedEvents()
 	m.loading = true
-	m.status = "overlay off · back to " + m.calendarDisplayName()
+	m.say("overlay off · back to " + m.calendarDisplayName())
 	return m.reload()
 }
 

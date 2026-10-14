@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/toast"
 )
 
 func (m model) Init() tea.Cmd {
@@ -57,8 +58,25 @@ func (m model) notifyScanCmd() tea.Cmd {
 	}
 }
 
+// reminderTTL keeps a reminder that could not be toasted by tmux/osascript on
+// screen longer than an ordinary note: it is the only place it appears.
+const reminderTTL = 30 * time.Second
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := m.toasts
+	next, cmd := m.update(msg)
+	nm, ok := next.(model)
+	if !ok {
+		return next, cmd
+	}
+	return nm, tea.Batch(cmd, toastTicks(before, nm.toasts))
+}
+
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case toast.Expired:
+		m.toasts = toast.Update(m.toasts, msg)
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -74,11 +92,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case notifyResultMsg:
 		switch {
 		case msg.err != nil:
-			m.status = "reminder failed: " + msg.err.Error()
+			m.fail(srcNotify, "reminder failed: "+msg.err.Error())
 		case len(msg.shown) > 0:
-			m.status = strings.Join(msg.shown, " · ")
+			m.pushTTL(srcNotify, toast.Info, strings.Join(msg.shown, " · "), reminderTTL)
 		case msg.fired > 0:
-			m.status = fmt.Sprintf("%d reminder(s) sent", msg.fired)
+			m.push(srcNotify, toast.Info, fmt.Sprintf("%d reminder(s) sent", msg.fired))
 		}
 		return m, nil
 	case clockTickMsg:
@@ -97,10 +115,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// transient failure after a nudge or save used to blank the whole
 			// agenda. loadedStart/End stay with those events, so anchorLoaded()
 			// still reports the gap and the next move retries the fetch.
-			m.status = "load failed: " + msg.err.Error()
+			text := "load failed: " + msg.err.Error()
 			if m.hasLoaded() {
-				m.status += " · showing last loaded"
+				text += " · showing last loaded"
 			}
+			m.fail(srcLoad, text)
 		} else {
 			m.events = msg.events
 			m.loadedStart = msg.start
@@ -110,11 +129,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selected < 0 || m.selected >= len(m.events) || m.selectedEvent() == nil {
 				m.selected = m.firstEventIndexOnOrAfter(m.anchor)
 			}
-			m.status = fmt.Sprintf("loaded %d events", len(m.events))
-		}
-		if m.pendingNote != "" {
-			m.status = m.pendingNote
-			m.pendingNote = ""
+			// Same source as the failure, so a good load replaces a stale error.
+			m.push(srcLoad, toast.Info, fmt.Sprintf("loaded %d events", len(m.events)))
 		}
 		return m, nil
 	case overlayLoadedMsg:
@@ -138,11 +154,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				names = append(names, overlayShortName(cal))
 			}
 			sort.Strings(names)
-			m.status = fmt.Sprintf("%d events · %d calendar(s) NOT loaded: %s",
-				len(m.events), n, strings.Join(names, ", "))
+			m.fail(srcLoad, fmt.Sprintf("%d events · %d calendar(s) NOT loaded: %s",
+				len(m.events), n, strings.Join(names, ", ")))
 		} else {
-			m.status = fmt.Sprintf("%d events across %d calendars",
-				len(m.events), len(m.overlay.active))
+			m.push(srcLoad, toast.Info, fmt.Sprintf("%d events across %d calendars",
+				len(m.events), len(m.overlay.active)))
 		}
 		return m, nil
 	case recentsMsg:
@@ -152,17 +168,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case recentsSavedMsg:
 		if msg.err != nil {
 			// The switch itself worked; only the recents list is stale.
-			m.status = msg.err.Error()
+			m.fail(srcRecents, msg.err.Error())
 		}
 		return m, nil
 	case statusMsg:
-		m.status = string(msg)
+		m.say(string(msg))
+		return m, nil
+	case actionFailedMsg:
+		m.fail(srcAction, string(msg))
 		return m, nil
 	case clipboardCopiedMsg:
 		if msg.err != nil {
-			m.status = "copy failed: " + msg.err.Error()
+			m.fail(srcAction, "copy failed: "+msg.err.Error())
 		} else {
-			m.status = "copied " + msg.label
+			m.done(srcAction, "copied "+msg.label)
 		}
 		return m, nil
 	case findTimeMsg:
@@ -178,13 +197,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.find.slotIdx = max(0, min(m.find.slotIdx, len(msg.slots)-1))
 		switch {
 		case len(msg.slots) == 0:
-			m.status = "no slot fits — try d (shorter) or H (open up the hours)"
+			m.say("no slot fits — try d (shorter) or H (open up the hours)")
 		case msg.slots[0].allFree():
-			m.status = fmt.Sprintf("%d slots · best: %s works for everyone",
-				len(msg.slots), m.slotRangeLabel(msg.slots[0]))
+			m.say(fmt.Sprintf("%d slots · best: %s works for everyone",
+				len(msg.slots), m.slotRangeLabel(msg.slots[0])))
 		default:
-			m.status = fmt.Sprintf("%d slots · nobody is free for all of it — best is %d/%d",
-				len(msg.slots), len(msg.slots[0].free), len(msg.slots[0].free)+len(msg.slots[0].busy))
+			m.say(fmt.Sprintf("%d slots · nobody is free for all of it — best is %d/%d",
+				len(msg.slots), len(msg.slots[0].free), len(msg.slots[0].free)+len(msg.slots[0].busy)))
 		}
 		return m, nil
 	case createdMsg:
@@ -200,9 +219,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		n := len(m.create.attendees)
 		if n > 0 {
-			m.status = fmt.Sprintf("%s \"%s\" | invited %d · u to undo", verb, m.create.title, n)
+			m.done(srcAction, fmt.Sprintf("%s \"%s\" | invited %d · u to undo", verb, m.create.title, n))
 		} else {
-			m.status = fmt.Sprintf("%s \"%s\" · u to undo", verb, m.create.title)
+			m.done(srcAction, fmt.Sprintf("%s \"%s\" · u to undo", verb, m.create.title))
 		}
 		// Record undo. A create is reversed by deleting; a patch is reversed by
 		// restoring the pre-edit field values captured when the form opened.
@@ -227,24 +246,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeNormal
 		if msg.err != nil {
 			m.err = msg.err
-			m.status = "delete failed"
+			m.fail(srcAction, "delete failed: "+msg.err.Error())
 			return m, nil
 		}
 		if msg.restore != nil {
 			m.lastUndo = msg.restore
-			m.status = fmt.Sprintf("deleted \"%s\" · u to undo", msg.restore.label)
+			m.done(srcAction, fmt.Sprintf("deleted \"%s\" · u to undo", msg.restore.label))
 		} else {
-			m.status = "event deleted"
+			m.done(srcAction, "event deleted")
 		}
 		return m, m.reload()
 	case undoneMsg:
 		if msg.err != nil {
 			m.err = msg.err
-			m.status = "undo failed: " + msg.err.Error()
+			m.fail(srcAction, "undo failed: "+msg.err.Error())
 			return m, nil
 		}
 		m.lastUndo = nil
-		m.status = "undid: " + msg.label
+		m.done(srcAction, "undid: "+msg.label)
 		m.loading = true
 		return m, m.reload()
 	case eventShiftedMsg:
@@ -256,17 +275,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				p := *m.pending
 				p.saving = false
 				m.pending = &p
-				m.status = "save failed: " + msg.err.Error() + " · s retries, esc discards"
+				m.fail(srcAction, "save failed: "+msg.err.Error()+" · s retries, esc discards")
 				return m, nil
 			}
-			m.status = "shift failed: " + msg.err.Error()
+			m.fail(srcAction, "shift failed: "+msg.err.Error())
 			return m, nil
 		}
 		if msg.committed {
 			m.pending = nil
 		}
 		m.lastUndo = msg.restore
-		m.status = msg.label + " · u to undo"
+		m.done(srcAction, msg.label+" · u to undo")
 		m.loading = true
 		return m, m.reload()
 	case tea.KeyMsg:

@@ -32,8 +32,8 @@ func TestFailedReloadKeepsLastGoodEvents(t *testing.T) {
 	if len(gm.events) != 1 {
 		t.Fatalf("events = %d after failed reload, want the last good 1", len(gm.events))
 	}
-	if !strings.Contains(gm.status, "503 backend error") {
-		t.Errorf("status = %q, want the load error", gm.status)
+	if !strings.Contains(gm.statusText(), "503 backend error") {
+		t.Errorf("status = %q, want the load error", gm.statusText())
 	}
 	out := stripANSI(gm.View())
 	if !strings.Contains(out, "Quarterly planning") {

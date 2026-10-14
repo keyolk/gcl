@@ -44,7 +44,7 @@ func openCmd(link string) tea.Cmd {
 			opener = "open"
 		}
 		if err := exec.Command(opener, link).Start(); err != nil {
-			return statusMsg("open failed: " + err.Error())
+			return actionFailedMsg("open failed: " + err.Error())
 		}
 		return statusMsg("opened: " + link)
 	}

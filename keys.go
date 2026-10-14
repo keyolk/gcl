@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/toast"
 )
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -17,6 +18,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
 	}
+	// A key press is how a sticky error is acknowledged; done before the
+	// handler so an error this key causes is not cleared by the same key.
+	m.toasts = toast.OnKey(m.toasts)
 
 	// Under a Korean input source the shortcut keys arrive as jamo (`q` → `ㅂ`).
 	// Rewrite them to the Latin key at the same physical position so shortcuts
@@ -48,7 +52,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			c.finalizeAttendees()
 			c.submitting = true
 			c.err = ""
-			m.status = "creating~"
+			m.say("creating~")
 			return m, m.submitCreateCmd()
 		case "n", "N", "esc":
 			// Return to the form, not to normal mode, so an in-progress
@@ -75,7 +79,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			notify := len(ev.Attendees) > 0
 			// Snapshot before deleting so `u` can recreate the event.
 			restore := undoSnapshot(ev, cal, undoDelete)
-			m.status = "deleting~"
+			m.say("deleting~")
 			return m, func() tea.Msg {
 				err := deleteEvent(cal, id, notify)
 				if err != nil {
@@ -85,7 +89,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		default: // n / N / esc / anything else cancels
 			m.mode = modeNormal
-			m.status = "delete cancelled"
+			m.say("delete cancelled")
 		}
 		return m, nil
 	}
@@ -108,7 +112,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.gridDetail = 0
 					m.keepGridStable()
 				}
-				m.status = "jumped to " + m.events[m.selected].Title
+				m.say("jumped to " + m.events[m.selected].Title)
 			}
 			m.mode = modeNormal
 			m.input = ""
@@ -214,7 +218,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Leave the panel but keep it open — esc backs out of the focus, not
 			// out of the view. `a` is what closes it.
 			m.focusPane = focusMain
-			m.status = "focus: schedule (panel still open, a closes it)"
+			m.say("focus: schedule (panel still open, a closes it)")
 			return m, nil
 		case "down", "j", "ctrl+n":
 			m.activeIndex = min(m.activeIndex+1, max(0, len(evs)-1))
@@ -240,7 +244,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.syncSelectionToActive()
 			m.focusPane = focusMain
-			m.status = "jumped to " + evs[max(0, min(m.activeIndex, len(evs)-1))].Title
+			m.say("jumped to " + evs[max(0, min(m.activeIndex, len(evs)-1))].Title)
 			return m, nil
 		}
 		// Not a panel-list key: the schedule selection already tracks the panel
@@ -262,7 +266,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// an explicit discard (esc) or save (s) first. ctrl+c is the abort and
 		// does not ask -- it is handled at the top of handleKey.
 		if m.pending != nil {
-			m.status = "unsaved " + m.pending.label() + " on \"" + m.pending.title + "\" — s to save, esc to discard, then q"
+			m.warn("unsaved " + m.pending.label() + " on \"" + m.pending.title + "\" — s to save, esc to discard, then q")
 			return m, nil
 		}
 		return m, tea.Quit
@@ -309,13 +313,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "d":
 		m.jumpUnit = "day"
-		m.status = "step: day"
+		m.say("step: day")
 	case "w":
 		m.jumpUnit = "week"
-		m.status = "step: week"
+		m.say("step: week")
 	case "m":
 		m.jumpUnit = "month"
-		m.status = "step: month"
+		m.say("step: month")
 	case "g", "v":
 		// Toggle grid view. g -> week grid; from grid -> back to list.
 		if m.view == viewList {
@@ -333,7 +337,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if ev := m.currentActionEvent(); ev != nil && ev.ID != "" {
 			m.mode = modeConfirmDelete
 		} else {
-			m.status = "no event selected"
+			m.warn("no event selected")
 		}
 	case "tab":
 		m.cycleFocus()
@@ -343,9 +347,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if n := len(settings.timezones); n > 0 {
 			m.tzIndex = (m.tzIndex + 1) % n
 		}
-		m.status = "timezone: " + m.tzLabel()
+		m.say("timezone: " + m.tzLabel())
 	case "enter", "o":
-		return m, m.openPrimary()
+		cmd := m.openPrimary()
+		return m, cmd
 	case "L":
 		if ev := m.currentActionEvent(); ev != nil && len(ev.otherLinks()) > 0 {
 			links := ev.otherLinks()
@@ -357,7 +362,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.picker = pickerState{title: "Links - Enter opens", kind: pickerLinks, items: items}
 			m.input = ""
 		} else {
-			m.status = "no extra links (Enter opens the calendar event)"
+			m.warn("no extra links (Enter opens the calendar event)")
 		}
 	case "A":
 		if ev := m.currentActionEvent(); ev != nil && len(ev.Attendees) > 0 {
@@ -370,7 +375,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.picker = pickerState{title: "Attendees - Enter opens their calendar", kind: pickerAttendee, items: items}
 			m.input = ""
 		} else {
-			m.status = "selected event has no attendees"
+			m.warn("selected event has no attendees")
 		}
 	case "/":
 		m.mode = modeSearch
@@ -388,7 +393,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// the slot search only runs once you have chosen who is coming.
 		m.mode = modeFindTime
 		m.find = m.newFindState()
-		m.status = "who is coming? space toggles · Enter finds open slots"
+		m.say("who is coming? space toggles · Enter finds open slots")
 	case "O":
 		// Overlay several calendars into one agenda. Re-opening while an
 		// overlay is on starts from the current set, and confirming an empty
@@ -396,14 +401,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeOverlayPicker
 		m.overlay = m.newOverlayState()
 		if m.overlay.on() {
-			m.status = "overlay: space toggles · Enter applies · empty = off"
+			m.say("overlay: space toggles · Enter applies · empty = off")
 		} else {
-			m.status = "whose calendars? space toggles · Enter overlays them"
+			m.say("whose calendars? space toggles · Enter overlays them")
 		}
 	case "E":
 		if ev := m.currentActionEvent(); ev != nil {
 			if ev.StartAt.IsZero() {
-				m.status = "can't edit all-day events here yet"
+				m.warn("can't edit all-day events here yet")
 			} else {
 				m.mode = modeCreate
 				m.create = m.editCreateState(ev)
@@ -421,24 +426,24 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.focusPane == focusActive {
 				m.focusPane = focusMain
 			}
-			m.status = "active panel closed"
+			m.say("active panel closed")
 			return m, nil
 		}
 		m.activeIndex = 0
 		if n := len(m.activeEvents(time.Now())); n == 0 {
-			m.status = "nothing active right now"
+			m.say("nothing active right now")
 		} else {
-			m.status = fmt.Sprintf("%d active · tab to focus the panel", n)
+			m.say(fmt.Sprintf("%d active · tab to focus the panel", n))
 		}
 	case "y":
 		if m.currentActionEvent() == nil {
-			m.status = "no event selected"
+			m.warn("no event selected")
 			return m, nil
 		}
 		m.yankPending = true
 		// The hint bar already spells out the y-combinations; repeating them in
 		// the status line said the same thing twice on adjacent rows.
-		m.status = "copy what?"
+		m.say("copy what?")
 	case "t":
 		// The timeline is the only thing on the row that costs horizontal
 		// space, so it has to be switchable off when a long title matters more
@@ -446,13 +451,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.timelineHidden = !m.timelineHidden
 		switch {
 		case m.timelineHidden:
-			m.status = "timeline off (t shows the overlap bars again)"
+			m.say("timeline off (t shows the overlap bars again)")
 		case m.view != viewList:
-			m.status = "timeline on — it draws in the list view (g)"
+			m.say("timeline on — it draws in the list view (g)")
 		case timelineColsWithReserve(max(20, m.schedulePaneWidth()-1), m.overlayRowReserve()) == 0:
-			m.status = "timeline on — but this pane is too narrow to draw it"
+			m.say("timeline on — but this pane is too narrow to draw it")
 		default:
-			m.status = "timeline on: bars share a 00-24h axis, the ruler shades how many run at once"
+			m.say("timeline on: bars share a 00-24h axis, the ruler shades how many run at once")
 		}
 	case "?":
 		m.mode = modeHelp

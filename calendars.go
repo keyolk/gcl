@@ -15,7 +15,7 @@ func (m model) choosePicker(it pickerItem) (tea.Model, tea.Cmd) {
 		return m, openCmd(it.value)
 	case pickerCalendar, pickerAttendee:
 		if it.value == "" {
-			m.status = "no calendar id for selection"
+			m.say("no calendar id for selection")
 			m.mode = modeNormal
 			m.input = ""
 			return m, nil
@@ -27,7 +27,6 @@ func (m model) choosePicker(it pickerItem) (tea.Model, tea.Cmd) {
 		m.calendar = it.value
 		m.dropLoadedEvents()
 		m.loading = true
-		m.status = "loading~"
 		// Switching calendars while an overlay is on would otherwise change
 		// only which calendar new events land on, leaving the agenda showing
 		// the same merged set — the keypress would look like it did nothing.
@@ -35,9 +34,8 @@ func (m model) choosePicker(it pickerItem) (tea.Model, tea.Cmd) {
 		if m.overlay.on() {
 			m.overlay.active = nil
 			m.overlay.failed = nil
-			// scheduleFetch overwrites status with "loading~", so the note has
-			// to survive until the load lands (see eventsMsg).
-			m.pendingNote = "overlay off · " + displayNameForCalendar(it.value)
+			// Its own source, so the load result that follows does not replace it.
+			m.say("overlay off · " + displayNameForCalendar(it.value))
 		}
 		// The pick is remembered in memory now and written by a Cmd; a write
 		// failure arrives as recentsSavedMsg.

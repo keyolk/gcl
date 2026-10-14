@@ -206,10 +206,10 @@ func (m model) handleQuickAction(key string) (tea.Model, tea.Cmd, bool) {
 	// `u` works even with no event selected.
 	if key == "u" {
 		if m.lastUndo == nil {
-			m.status = "nothing to undo"
+			m.say("nothing to undo")
 			return m, nil, true
 		}
-		m.status = "undoing~"
+		m.say("undoing~")
 		return m, m.undoCmd(), true
 	}
 
@@ -219,7 +219,7 @@ func (m model) handleQuickAction(key string) (tea.Model, tea.Cmd, bool) {
 		switch key {
 		case "s":
 			if m.pending.saving {
-				m.status = "already saving~"
+				m.say("already saving~")
 				return m, nil, true
 			}
 			label := m.pending.label()
@@ -227,25 +227,26 @@ func (m model) handleQuickAction(key string) (tea.Model, tea.Cmd, bool) {
 			// save is retryable rather than silently lost.
 			n := len(m.pending.attendees)
 			cmd := m.commitPendingCmd()
-			m.status = "saving " + label + "~"
 			if n > 0 {
 				// Quick saves pass Notify:false. Moving a meeting without
 				// telling the people in it is a real hazard, so say it plainly
 				// instead of leaving it to the source comment.
-				m.status += fmt.Sprintf(" · %d %s NOT notified (E to edit and notify)",
-					n, plural(n, "attendee", "attendees"))
+				m.warn(fmt.Sprintf("saving %s~ · %d %s NOT notified (E to edit and notify)",
+					label, n, plural(n, "attendee", "attendees")))
+			} else {
+				m.say("saving " + label + "~")
 			}
 			return m, cmd, true
 		case "esc":
 			if m.pending.saving {
-				m.status = "save in flight — can't discard now"
+				m.warn("save in flight — can't discard now")
 				return m, nil, true
 			}
-			m.status = m.discardPending()
+			m.say(m.discardPending())
 			return m, nil, true
 		}
 	} else if key == "s" {
-		m.status = "nothing staged to save (use )( }{ >< to adjust the time first)"
+		m.say("nothing staged to save (use )( }{ >< to adjust the time first)")
 		return m, nil, true
 	}
 
@@ -257,28 +258,28 @@ func (m model) handleQuickAction(key string) (tea.Model, tea.Cmd, bool) {
 	// Nudges/resizes/day-moves stage a change; they no longer patch Google.
 	switch key {
 	case ")":
-		m.status = m.stagePending(ev, nudgeStep, nudgeStep, 0)
+		m.say(m.stagePending(ev, nudgeStep, nudgeStep, 0))
 		return m, nil, true
 	case "(":
-		m.status = m.stagePending(ev, -nudgeStep, -nudgeStep, 0)
+		m.say(m.stagePending(ev, -nudgeStep, -nudgeStep, 0))
 		return m, nil, true
 	case "}":
-		m.status = m.stagePending(ev, 0, nudgeStep, 0)
+		m.say(m.stagePending(ev, 0, nudgeStep, 0))
 		return m, nil, true
 	case "{":
-		m.status = m.stagePending(ev, 0, -nudgeStep, 0)
+		m.say(m.stagePending(ev, 0, -nudgeStep, 0))
 		return m, nil, true
 	case ">":
-		m.status = m.stagePending(ev, 0, 0, 1)
+		m.say(m.stagePending(ev, 0, 0, 1))
 		return m, nil, true
 	case "<":
-		m.status = m.stagePending(ev, 0, 0, -1)
+		m.say(m.stagePending(ev, 0, 0, -1))
 		return m, nil, true
 	case "D":
-		m.status = "duplicating~"
+		m.say("duplicating~")
 		return m, m.duplicateEventCmd(ev, 0, "duplicated \""+ev.Title+"\""), true
 	case "W":
-		m.status = "copying to next week~"
+		m.say("copying to next week~")
 		return m, m.duplicateEventCmd(ev, 7, "copied \""+ev.Title+"\" to next week"), true
 	}
 	return m, nil, false

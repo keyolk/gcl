@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keyolk/tuikit/toast"
 )
 
 func yankTestModel() model {
@@ -144,8 +146,8 @@ func TestYankPrefixCancelAndUnknownKeyAreConsumed(t *testing.T) {
 	m = started.(model)
 	cancelled, cmd := m.handleKey(keyMsg("esc"))
 	m = cancelled.(model)
-	if cmd != nil || m.yankPending || m.status != "yank cancelled" {
-		t.Errorf("y esc = pending=%v status=%q cmd=%v", m.yankPending, m.status, cmd != nil)
+	if cmd != nil || m.yankPending || m.statusText() != "yank cancelled" {
+		t.Errorf("y esc = pending=%v status=%q cmd=%v", m.yankPending, m.statusText(), cmd != nil)
 	}
 
 	started, _ = m.handleKey(keyMsg("y"))
@@ -158,8 +160,8 @@ func TestYankPrefixCancelAndUnknownKeyAreConsumed(t *testing.T) {
 	if m.selected != 0 {
 		t.Errorf("yj moved selection to %d; the suffix must not fall through", m.selected)
 	}
-	if m.status != "unknown yank key: j" {
-		t.Errorf("status = %q", m.status)
+	if m.statusText() != "unknown yank key: j" {
+		t.Errorf("status = %q", m.statusText())
 	}
 }
 
@@ -170,15 +172,22 @@ func TestYankPrefixHandlesSelectionDisappearing(t *testing.T) {
 	if cmd != nil || got.yankPending {
 		t.Errorf("missing selection should clear prefix without a command; pending=%v cmd=%v", got.yankPending, cmd != nil)
 	}
-	if got.status != "no event selected" {
-		t.Errorf("status = %q, want no event selected", got.status)
+	if got.statusText() != "no event selected" {
+		t.Errorf("status = %q, want no event selected", got.statusText())
 	}
 }
 
 func TestClipboardResultUpdatesStatus(t *testing.T) {
 	m := model{}
 	updated, cmd := m.Update(clipboardCopiedMsg{label: "description"})
-	if cmd != nil || updated.(model).status != "copied description" {
-		t.Errorf("success status = %q, cmd=%v", updated.(model).status, cmd != nil)
+	if updated.(model).statusText() != "copied description" {
+		t.Errorf("success status = %q", updated.(model).statusText())
+	}
+	// The only Cmd is the toast's own expiry timer.
+	if cmd == nil {
+		t.Error("a success toast was pushed without an expiry tick")
+	}
+	if items := updated.(model).toasts.Items(); len(items) != 1 || items[0].Level != toast.Success {
+		t.Errorf("toasts = %+v, want one success", items)
 	}
 }

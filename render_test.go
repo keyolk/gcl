@@ -159,7 +159,7 @@ func TestFrameFitsAtEverySize(t *testing.T) {
 	mk := func(w, h int, view viewMode, open bool) model {
 		return model{
 			width: w, height: h, view: view, anchor: today(), jumpUnit: "day",
-			calendar: "me", status: "loaded", activeOpen: open, gridTop: weekStart(today()),
+			calendar: "me", activeOpen: open, gridTop: weekStart(today()),
 			events: []Event{
 				{ID: "w", Title: "apne2 maintenance window",
 					StartDate: today().AddDate(0, 0, -2), EndDate: today().AddDate(0, 0, 2)},

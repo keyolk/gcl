@@ -269,8 +269,8 @@ func (m model) handleFindKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		slot := f.slots[max(0, min(f.slotIdx, len(f.slots)-1))]
 		m.mode = modeCreate
 		m.create = m.createStateFromSlot(slot)
-		m.status = fmt.Sprintf("prefilled %s · title it and press Enter to create",
-			m.slotRangeLabel(slot))
+		m.say(fmt.Sprintf("prefilled %s · title it and press Enter to create",
+			m.slotRangeLabel(slot)))
 		return m, nil
 	}
 	return m, nil
