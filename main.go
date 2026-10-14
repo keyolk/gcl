@@ -442,6 +442,8 @@ var (
 	calPillStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("232")).Background(lipgloss.Color("212")).Padding(0, 1)
 	metaStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("189")).Background(lipgloss.Color("62")).Padding(0, 1)
 	tzPillStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("232")).Background(lipgloss.Color("150")).Padding(0, 1)
+	// loadingPillStyle flags a background reload while the old agenda stays up.
+	loadingPillStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Padding(0, 1)
 	// activePillStyle marks the header's "in effect right now" counter. Red
 	// background because it is a state, not a navigation aid.
 	activePillStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("124")).Padding(0, 1)
@@ -652,9 +654,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.err = msg.err
 		if msg.err != nil {
-			m.events = nil
-			m.selected = 0
-			m.status = "load failed"
+			// Keep the last good events (and their loaded window) on screen: a
+			// transient failure after a nudge or save used to blank the whole
+			// agenda. loadedStart/End stay with those events, so anchorLoaded()
+			// still reports the gap and the next move retries the fetch.
+			m.status = "load failed: " + msg.err.Error()
+			if m.hasLoaded() {
+				m.status += " · showing last loaded"
+			}
 		} else {
 			m.events = msg.events
 			m.loadedStart = msg.start
@@ -1286,6 +1293,23 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeHelp
 	}
 	return m, nil
+}
+
+// hasLoaded reports whether a fetch has ever landed for the current source, i.e.
+// whether there is a real agenda to keep on screen while reloading.
+func (m model) hasLoaded() bool {
+	return !m.loadedStart.IsZero()
+}
+
+// dropLoadedEvents forgets the loaded agenda. Call it when the event SOURCE
+// changes (another calendar, overlay on/off): the old events belong to a
+// different calendar, so keeping them through the reload — or through a failed
+// reload — would show them under the new calendar's name.
+func (m *model) dropLoadedEvents() {
+	m.events = nil
+	m.selected = 0
+	m.loadedStart = time.Time{}
+	m.loadedEnd = time.Time{}
 }
 
 // joinNote appends note to an existing status note with the usual separator.
@@ -1985,6 +2009,7 @@ func (m model) choosePicker(it pickerItem) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.calendarKey = it.value
 		m.calendar = it.value
+		m.dropLoadedEvents()
 		m.loading = true
 		m.status = "loading~"
 		// Switching calendars while an overlay is on would otherwise change
@@ -2077,7 +2102,13 @@ func (m model) View() string {
 		metaText = fmt.Sprintf("%s | %s | step:%s", viewName, m.anchor.Format("2006-01-02"), m.jumpUnit)
 	}
 	meta := metaStyle.Render(" " + metaText + " ")
-	headerContent := calPill + meta + tzPill
+	headerContent := calPill
+	// The reload indicator sits right after the calendar pill so the
+	// tail-truncation of a narrow header never cuts it off.
+	if m.loading && m.hasLoaded() {
+		headerContent += loadingPillStyle.Render("loading~")
+	}
+	headerContent += meta + tzPill
 	// An in-effect event is the thing you most need to know without asking, so
 	// the count lives in the header and doubles as the advert for `a`.
 	if label := m.activeCountLabel(time.Now()); label != "" {
@@ -2109,9 +2140,13 @@ func (m model) View() string {
 		scheduleHeight = max(3, scheduleHeight-1)
 	}
 	var body string
-	if m.loading {
+	// Only an agenda that has never loaded is replaced by a placeholder. Once
+	// events are on screen, a reload (nudge, save, move) keeps them and the
+	// header shows a loading pill instead, so the body never flashes empty; a
+	// failed reload likewise keeps them and reports in the status line.
+	if m.loading && !m.hasLoaded() {
 		body = cardStyle.Width(max(20, bodyWidth-4)).Render("loading calendar events~")
-	} else if m.err != nil {
+	} else if m.err != nil && !m.hasLoaded() {
 		body = errorStyle.Render(wrap(m.err.Error(), bodyWidth))
 	} else {
 		// The schedule (list agenda or grid) plus a detail pane. The detail pane
