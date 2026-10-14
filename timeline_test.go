@@ -2,6 +2,7 @@ package main
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -511,5 +512,28 @@ func TestDensityDistinguishesQuietAndStackedHours(t *testing.T) {
 	}
 	if densityLevelBG(density[5], peak) != tlTrackBG {
 		t.Error("an hour with nothing running must show the empty track")
+	}
+}
+
+// The ruler's hour labels come from chart.Ruler; they must still land on the
+// hour they name, on top of the density background.
+func TestRulerLabelsSitOnTheirHours(t *testing.T) {
+	day := time.Date(2026, 8, 13, 0, 0, 0, 0, time.Local)
+	m := timelineModel(160, timedEvent("x", day, 9, 0, 10, 0, 0))
+	const cols = 24
+	ruler := stripANSI(m.timelineRuler(day, m.dayBuckets()[day.Format("2006-01-02")], 60, cols, 1))
+	axis := ruler[len(ruler)-cols:]
+	for _, h := range []int{0, 6, 12, 18} {
+		label := strconv.Itoa(h)
+		if got := axis[h : h+len(label)]; got != label {
+			t.Errorf("hour %d label at column %d = %q, want %q (axis %q)", h, h, got, label, axis)
+		}
+	}
+	// 09:00-10:00 is the only busy column: it must carry a density
+	// background that differs from the empty track.
+	runes := bgRunes(m.timelineRuler(day, m.dayBuckets()[day.Format("2006-01-02")], 60, cols, 1))
+	bar := runes[len(runes)-cols:]
+	if bar[9] == '.' || bar[8] != '.' || bar[10] != '.' {
+		t.Errorf("density background misplaced: %q", bar)
 	}
 }

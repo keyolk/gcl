@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/keyolk/tuikit/chart"
 )
 
 // 24-hour mini timeline for the LIST agenda.
@@ -26,6 +28,11 @@ import (
 // glyphs (U+2580–259F): those are East-Asian-ambiguous and render 2 cells wide
 // in some terminals, which would desync the whole frame. The only non-space
 // characters are ASCII (`|`, `<`, `>`, digits), all reliably 1 cell.
+//
+// The axis math (span columns with an exclusive end, per-column density,
+// overflow arrows, the now marker, tick placement) is tuikit's chart package,
+// which was ported from this file; what stays here is the calendar logic and
+// the background-color palette.
 
 const (
 	timelineMinCols = 24 // 1 column per hour
@@ -118,72 +125,26 @@ func (m model) viewToday() time.Time {
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
 }
 
-// timelineSpan maps [start, end) onto column indices of a cols-wide axis
-// covering the single day beginning at dayStart. before/after report that the
-// event runs past that day's edge (a maintenance window crossing midnight), so
-// the caller can draw an overflow arrow instead of silently clipping.
-//
-// ok is false when the event does not intersect the day at all.
-func timelineSpan(start, end, dayStart time.Time, cols int) (lo, hi int, before, after, ok bool) {
-	if cols <= 0 || start.IsZero() {
-		return 0, 0, false, false, false
+// chartSpans converts events to chart spans using the interval each row DRAWS
+// (rowSpan). An event with no start instant has nothing to place on an axis.
+func (m model) chartSpans(evs []*Event) []chart.Span {
+	out := make([]chart.Span, 0, len(evs))
+	for _, ev := range evs {
+		start, end := m.rowSpan(ev)
+		if start.IsZero() {
+			continue
+		}
+		out = append(out, chart.Span{Start: start, End: end})
 	}
-	// AddDate, not Add(24h): a DST day is 23 or 25 hours long and the axis has
-	// to cover exactly the day the header names.
-	dayEnd := dayStart.AddDate(0, 0, 1)
-	if end.IsZero() || !end.After(start) {
-		end = start // zero-length events still deserve one visible column
-	}
-	if !end.After(dayStart) && !end.Equal(start) {
-		return 0, 0, false, false, false
-	}
-	if !start.Before(dayEnd) {
-		return 0, 0, false, false, false
-	}
-	if end.Before(dayStart) {
-		return 0, 0, false, false, false
-	}
-	span := dayEnd.Sub(dayStart)
-	col := func(t time.Time) float64 {
-		return float64(t.Sub(dayStart)) / float64(span) * float64(cols)
-	}
-	lo = int(col(start))
-	// The end instant is exclusive: an event ending exactly on a column
-	// boundary must not light that column up.
-	hi = int(col(end)*1000-1) / 1000
-	if lo < 0 {
-		lo = 0
-	}
-	if hi >= cols {
-		hi = cols - 1
-	}
-	if hi < lo {
-		hi = lo
-	}
-	if lo >= cols {
-		return 0, 0, false, false, false
-	}
-	return lo, hi, start.Before(dayStart), end.After(dayEnd), true
+	return out
 }
 
 // timelineDensity counts, per column, how many of evs are in effect somewhere
-// inside that column's slice of the day.
+// inside that column's slice of the day. The axis ends at AddDate(0, 0, 1),
+// not Add(24h): a DST day is 23 or 25 hours long and the axis has to cover
+// exactly the day the header names.
 func (m model) timelineDensity(evs []*Event, dayStart time.Time, cols int) []int {
-	if cols <= 0 {
-		return nil
-	}
-	out := make([]int, cols)
-	for _, ev := range evs {
-		start, end := m.rowSpan(ev)
-		lo, hi, _, _, ok := timelineSpan(start, end, dayStart, cols)
-		if !ok {
-			continue
-		}
-		for c := lo; c <= hi; c++ {
-			out[c]++
-		}
-	}
-	return out
+	return chart.Density(m.chartSpans(evs), dayStart, dayStart.AddDate(0, 0, 1), cols)
 }
 
 // Timeline palette. Backgrounds only — the bars are colored spaces.
@@ -255,8 +216,8 @@ type cell struct {
 	ch byte
 }
 
-// renderCells paints cells into a string, merging runs that share a style so a
-// 48-column bar costs a handful of escape sequences instead of 48.
+// renderCells paints the ruler's cells into a string, merging runs that share a
+// style so a 48-column ruler costs a handful of escape sequences instead of 48.
 func renderCells(cells []cell) string {
 	var b strings.Builder
 	for i := 0; i < len(cells); {
@@ -303,58 +264,66 @@ func (m model) rowSpan(ev *Event) (time.Time, time.Time) {
 	return activeSpan(ev)
 }
 
+// barGlyphs is the chart glyph set the timeline draws with: every span and
+// track cell is a SPACE, so the bar is carried by the background color alone
+// (see the file comment for why block glyphs are off the table here), and the
+// only visible characters are the 1-cell ASCII markers.
+var barGlyphs = func() chart.Glyphs {
+	g := chart.ASCII()
+	g.Density = [4]string{" ", " ", " ", " "}
+	g.Track, g.Now, g.Before, g.After = " ", "|", "<", ">"
+	return g
+}()
+
+// bgStyle is a style that paints only a background.
+func bgStyle(bg string) lipgloss.Style {
+	return lipgloss.NewStyle().Background(lipgloss.Color(bg))
+}
+
 // timelineBar draws one event's span on a cols-wide 24h track for dayStart.
 func (m model) timelineBar(ev *Event, dayStart time.Time, cols int, selected bool) string {
-	now := time.Now()
-	cells := make([]cell, cols)
-	for i := range cells {
-		cells[i] = cell{bg: tlTrackBG, ch: ' '}
+	if cols <= 0 {
+		return ""
 	}
-	start, end := m.rowSpan(ev)
-	lo, hi, before, after, ok := timelineSpan(start, end, dayStart, cols)
-	if ok {
-		bg := tlBarBG
-		switch {
-		case m.pendingFor(ev) != nil:
-			bg = tlPendingBG
-		case selected:
-			bg = tlSelBG
-		case ev.AllDay():
-			bg = tlAllDayBG
-		case isActiveAt(ev, now):
-			bg = tlActiveBG
-		default:
-			// In an overlay the bar is tinted with its owner's color, so the
-			// vertical alignment that already shows *that* two events overlap
-			// also shows *whose* they are. Row state (selected / staged /
-			// active-now) still wins: those say something about this row that
-			// matters more than who owns it.
-			if c := m.overlayColorFor(ev.Calendar); c != "" {
-				bg = c
-			}
-		}
-		for c := lo; c <= hi; c++ {
-			cells[c] = cell{bg: bg, ch: ' '}
-		}
-		// An event clipped by midnight says so, so a 21:00–04:30 window is
-		// never misread as ending when the day does.
-		if before {
-			cells[lo] = cell{bg: bg, fg: tlMarkFG, ch: '<'}
-		}
-		if after {
-			cells[hi] = cell{bg: bg, fg: tlMarkFG, ch: '>'}
+	now := time.Now()
+	from, to := dayStart, dayStart.AddDate(0, 0, 1)
+	spans := m.chartSpans([]*Event{ev})
+	bg := tlBarBG
+	switch {
+	case m.pendingFor(ev) != nil:
+		bg = tlPendingBG
+	case selected:
+		bg = tlSelBG
+	case ev.AllDay():
+		bg = tlAllDayBG
+	case isActiveAt(ev, now):
+		bg = tlActiveBG
+	default:
+		// In an overlay the bar is tinted with its owner's color, so the
+		// vertical alignment that already shows *that* two events overlap
+		// also shows *whose* they are. Row state (selected / staged /
+		// active-now) still wins: those say something about this row that
+		// matters more than who owns it.
+		if c := m.overlayColorFor(ev.Calendar); c != "" {
+			bg = c
 		}
 	}
 	// The now marker is the same "past | upcoming" boundary the agenda's
-	// horizontal divider draws, rotated onto the axis.
-	if c := nowColumn(dayStart, cols, now); c >= 0 {
-		fg := tlNowFG
-		if cells[c].bg != tlTrackBG {
-			fg = tlMarkFG
-		}
-		cells[c] = cell{bg: cells[c].bg, fg: fg, ch: '|'}
+	// horizontal divider draws, rotated onto the axis. It keeps the color of
+	// the cell it lands on, so it has to know whether the bar covers it: the
+	// chart styles the marker with one style wherever it falls.
+	nowBG, nowFG := tlTrackBG, tlNowFG
+	if c := nowColumn(dayStart, cols, now); c >= 0 && chart.Density(spans, from, to, cols)[c] > 0 {
+		nowBG, nowFG = bg, tlMarkFG
 	}
-	return renderCells(cells)
+	// Line also styles the overflow arrows: an event clipped by midnight says
+	// so, so a 21:00-04:30 window is never misread as ending when the day does.
+	look := chart.Look{Glyphs: barGlyphs, Styles: chart.Styles{
+		Line:  bgStyle(bg).Foreground(lipgloss.Color(tlMarkFG)).Bold(true),
+		Muted: bgStyle(tlTrackBG),
+		Now:   bgStyle(nowBG).Foreground(lipgloss.Color(nowFG)).Bold(true),
+	}}
+	return chart.Timeline(spans, from, to, cols, chart.TimelineOpts{Look: look, Now: now, Peak: 1})
 }
 
 // dayBuckets groups every loaded event under each calendar day it TOUCHES, not
@@ -401,28 +370,34 @@ func (m model) timelineRuler(day time.Time, evs []*Event, width, cols int, peak 
 			dayPeak = n
 		}
 	}
+	// Hour ticks, spaced so a two-digit label never smears into its neighbour:
+	// the label needs 2 columns, the tick step needs to leave more than that.
+	step := 6 * time.Hour
+	switch {
+	case cols >= timelineMaxCols:
+		step = 2 * time.Hour
+	case cols >= timelineMidCols:
+		step = 3 * time.Hour
+	}
+	// The chart draws the labels and the now marker as plain ASCII (zero
+	// Look: no styles, ASCII glyphs), exactly cols cells. The background,
+	// which carries the density, is painted under it here: the chart's
+	// density is a glyph ramp, and this ruler is a color ramp of spaces.
+	axis := ansi.Strip(chart.Ruler(dayStart, dayStart.AddDate(0, 0, 1), cols, step,
+		chart.TimelineOpts{Now: time.Now()}))
 	cells := make([]cell, cols)
 	for i := range cells {
 		cells[i] = cell{bg: densityLevelBG(density[i], peak), ch: ' '}
-	}
-	// Hour ticks, spaced so a two-digit label never smears into its neighbour:
-	// the label needs 2 columns, the tick step needs to leave more than that.
-	step := 6
-	switch {
-	case cols >= timelineMaxCols:
-		step = 2
-	case cols >= timelineMidCols:
-		step = 3
-	}
-	for h := 0; h < 24; h += step {
-		label := fmt.Sprintf("%d", h)
-		at := h * cols / 24
-		for i := 0; i < len(label) && at+i < cols; i++ {
-			cells[at+i] = cell{bg: cells[at+i].bg, fg: densityLevelFG(density[at+i], peak), ch: label[i]}
+		if i >= len(axis) {
+			continue
 		}
-	}
-	if c := nowColumn(dayStart, cols, time.Now()); c >= 0 {
-		cells[c] = cell{bg: cells[c].bg, fg: tlNowFG, ch: '|'}
+		switch ch := axis[i]; ch {
+		case ' ':
+		case '|':
+			cells[i].fg, cells[i].ch = tlNowFG, ch
+		default:
+			cells[i].fg, cells[i].ch = densityLevelFG(density[i], peak), ch
+		}
 	}
 	// The left gutter carries the two numbers the shading cannot: how many
 	// events touch this day at all, and the most that ever run at once.
