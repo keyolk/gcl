@@ -123,7 +123,6 @@ func main() {
 		inflightReq:    1,
 	}
 	m.saver = prefs.NewSaver[uiState](appName, 0)
-	m.persist = true
 	st, stErr := loadUIState()
 	st.apply(&m)
 	if stErr != nil {

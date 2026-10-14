@@ -17,7 +17,6 @@ func persistModel(t *testing.T) model {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	m := loadedModel()
 	m.saver = prefs.NewSaver[uiState](appName, 0)
-	m.persist = true
 	return m
 }
 
@@ -137,5 +136,8 @@ func TestModelsWithoutPersistenceNeverWrite(t *testing.T) {
 	}
 	if _, cmd := next.(model).Update(keyMsg("q")); !isQuit(cmd) {
 		t.Error("q without persistence did not quit at once")
+	}
+	if _, err := os.Stat(prefs.Path(appName)); !os.IsNotExist(err) {
+		t.Errorf("q without persistence wrote the state file (stat: %v)", err)
 	}
 }

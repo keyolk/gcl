@@ -197,10 +197,9 @@ type model struct {
 	toasts      toast.Queue // the status line; see status.go
 	km          keys.Keymap // the key table with user overrides; zero means baseKeymap
 	helpOff     int         // first line shown on the help page (clamped by RenderHelp)
-	// saver writes uiState (uistate.go); persist is false for a model that was
-	// not built by main, so tests never touch the real state file.
+	// saver writes uiState (uistate.go). Only main gives it an app name: the
+	// zero Saver of a model literal (every test) writes nothing.
 	saver       prefs.Saver[uiState]
-	persist     bool
 	err         error
 	width       int
 	height      int

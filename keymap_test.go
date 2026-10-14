@@ -5,17 +5,24 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/prefs"
 )
 
-// isQuit reports whether a returned command is tea.Quit, by running it and
-// checking for the QuitMsg. tea.Quit is a plain func, so it cannot be compared
-// directly.
+// isQuit reports whether cmd ends the program: tea.Quit itself, or the final
+// UI-state flush, which Update answers with tea.Quit (tea.Quit is a plain
+// func, so it cannot be compared directly). A model literal holds
+// the zero Saver, whose flush reports Final at once without writing.
 func isQuit(cmd tea.Cmd) bool {
 	if cmd == nil {
 		return false
 	}
-	_, ok := cmd().(tea.QuitMsg)
-	return ok
+	switch msg := cmd().(type) {
+	case tea.QuitMsg:
+		return true
+	case prefs.Saved:
+		return msg.Final
+	}
+	return false
 }
 
 func TestNormalizeCJKKeyMapsJamoByPhysicalPosition(t *testing.T) {

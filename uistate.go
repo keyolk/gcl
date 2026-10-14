@@ -87,12 +87,9 @@ func loadUIState() (uiState, error) {
 }
 
 // saveUIState queues a debounced write when the state changed during this
-// Update. A model that was not given a Saver (persist false: every test that
-// builds a model literal) writes nothing.
+// Update. A model that was not given a Saver (every test that builds a model
+// literal) holds the zero Saver, which writes nothing.
 func (m model) saveUIState(before uiState) (model, tea.Cmd) {
-	if !m.persist {
-		return m, nil
-	}
 	now := m.uiState()
 	if now.equal(before) {
 		return m, nil
@@ -102,13 +99,11 @@ func (m model) saveUIState(before uiState) (model, tea.Cmd) {
 	return m, cmd
 }
 
-// quit leaves the program. With persistence on it first flushes the latest
-// UI state and quits on the Saved{Final} that reports it written (Update).
+// quit leaves the program: it flushes the latest UI state and quits on the
+// Saved{Final} that reports it written (Update). The zero Saver reports Final
+// at once without writing.
 func (m model) quit() (tea.Model, tea.Cmd) {
-	if !m.persist {
-		return m, tea.Quit
-	}
 	var cmd tea.Cmd
-	m.saver, cmd = m.saver.Flush()
+	m.saver, cmd = m.saver.FlushWith(m.uiState())
 	return m, cmd
 }
