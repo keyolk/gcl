@@ -91,10 +91,21 @@ func short(x keys.Binding, s string) keys.Binding      { x.Short = s; return x }
 func group(x keys.Binding, g string) keys.Binding      { x.FooterGroup = g; return x }
 func pinned(x keys.Binding) keys.Binding               { x.Pinned = true; return x }
 func shadows(x keys.Binding, a ...string) keys.Binding { x.Shadows = a; return x }
+func latinOnly(x keys.Binding) keys.Binding            { x.LatinOnly = true; return x }
 func labels(x keys.Binding, l map[string]string) keys.Binding {
 	x.Labels = l
 	return x
 }
+
+// groupLabels relabels x's FooterGroup by state: h/l reads "day", "week" or
+// "month" after the list step (keyState).
+func groupLabels(x keys.Binding, l map[string]string) keys.Binding {
+	x.GroupLabels = l
+	return x
+}
+
+// stepLabels names the list step on the h/l hint.
+var stepLabels = map[string]string{"day": "day", "week": "week", "month": "month"}
 
 // nudgeBindings are the staged-change keys. They are declared twice: in
 // ctxNudge, where the bar calls the group "move/resize", and in ctxPending,
@@ -118,8 +129,8 @@ func newKeymap() keys.Keymap {
 		pinned(b(ctxGlobal, "help", grpGeneral, k("?"), "help", 0)),
 
 		// List view.
-		group(b(ctxList, "list.prev", grpList, k("h", "left"), "move back one step (day/week/month)", prioNav), "date"),
-		group(b(ctxList, "list.next", grpList, k("l", "right"), "move forward one step", prioNav), "date"),
+		groupLabels(group(b(ctxList, "list.prev", grpList, k("h", "left"), "move back one step (day/week/month)", prioNav), "day"), stepLabels),
+		groupLabels(group(b(ctxList, "list.next", grpList, k("l", "right"), "move forward one step", prioNav), "day"), stepLabels),
 		group(b(ctxList, "list.down", grpList, k("j", "down"), "select the next event", prioNav), "select"),
 		group(b(ctxList, "list.up", grpList, k("k", "up"), "select the previous event", prioNav), "select"),
 		b(ctxList, "list.last", grpList, k("G", "end"), "select the last loaded event", 0),
@@ -141,11 +152,13 @@ func newKeymap() keys.Keymap {
 		short(b(ctxSchedule, "edit", grpEvent, k("E"), "edit (confirm shows only what changes)", prioAct), "edit"),
 		short(b(ctxSchedule, "delete", grpEvent, k("X", "x"), "delete (asks first)", prioExtra), "del"),
 		short(b(ctxSchedule, "yank", grpEvent, k("y"), "copy a field of the event (then y/u/s/e/d)", prioExtra), "copy"),
-		short(b(ctxSchedule, "attendees", grpEvent, k("A"), "attendees: open one's calendar", prioExtra), "attendees"),
-		short(b(ctxSchedule, "links", grpEvent, k("L"), "other links (zoom, docs); enter opens the event itself", prioExtra), "links"),
-		short(b(ctxSchedule, "new", grpEvent, k("N"), "new event", prioAct), "new"),
+		short(b(ctxSchedule, "attendees", grpEvent, k("A", "p"), "attendees (people): open one's calendar", prioExtra), "attendees"),
+		// No free lowercase key reads as "links"; enter opens the event page,
+		// which carries the same links, so a Korean layout still reaches them.
+		latinOnly(short(b(ctxSchedule, "links", grpEvent, k("L"), "other links (zoom, docs); enter opens the event itself", prioExtra), "links")),
+		short(b(ctxSchedule, "new", grpEvent, k("N", "c"), "new event (c: create)", prioAct), "new"),
 		short(b(ctxSchedule, "undo", grpEvent, k("u"), "undo the last create/edit/delete/save", prioAct), "undo"),
-		b(ctxNudge, "dup", grpTime, k("D"), "duplicate (applies at once)", 0),
+		b(ctxNudge, "dup", grpTime, k("D", "+"), "duplicate (applies at once)", 0),
 		b(ctxNudge, "dup.week", grpTime, k("W"), "copy to the same slot next week (applies at once)", 0),
 		// s outside a staged change only explains that nothing is staged.
 		b(ctxSchedule, "save", grpTime, k("s"), "SAVE the staged change to Google", 0),
@@ -158,7 +171,9 @@ func newKeymap() keys.Keymap {
 		short(b(ctxSchedule, "find", grpViews, k("f"), "find a time across several people", prioLoad), "find-a-time"),
 		labels(short(b(ctxSchedule, "view.grid", grpViews, k("g", "v"), "toggle list / week grid", prioExtra), "grid"),
 			map[string]string{"grid": "list"}),
-		b(ctxSchedule, "view.month", grpViews, k("M"), "month grid", 0),
+		// Latin-only: no free lowercase letter reads as "month". The week grid
+		// (g) and the list stepping by month (m) stay reachable on a Korean layout.
+		latinOnly(b(ctxSchedule, "view.month", grpViews, k("M"), "month grid", 0)),
 		labels(short(b(ctxSchedule, "active", grpViews, k("a"),
 			"toggle the active-now panel (never moves the cursor)", prioExtra), "active now"),
 			map[string]string{"open": "close"}),
@@ -240,7 +255,7 @@ func newKeymap() keys.Keymap {
 		short(b(ctxSlots, "slots.prefill", grpFind, k("enter"), "prefill a new event with the slot and people", prioAct), "prefill new event"),
 		short(b(ctxSlots, "slots.length", grpFind, k("d"), "cycle the meeting length", prioExtra), "length"),
 		short(b(ctxSlots, "slots.weekends", grpFind, k("w"), "include or skip weekends", prioExtra), "weekends"),
-		short(b(ctxSlots, "slots.hours", grpFind, k("H"), "working hours or the whole day", prioExtra), "hours"),
+		short(b(ctxSlots, "slots.hours", grpFind, k("H", "h"), "working hours or the whole day", prioExtra), "hours"),
 		short(b(ctxSlots, "slots.refresh", grpFind, k("R"), "read free/busy again", prioExtra), "refresh"),
 
 		// Confirm steps. Anything else cancels a delete.
@@ -424,6 +439,8 @@ func (m model) offered(action string) bool {
 
 func (m model) keyState(action string) string {
 	switch action {
+	case "list.prev", "list.next":
+		return m.jumpUnit
 	case "overlay":
 		if m.overlay.on() {
 			return "on"

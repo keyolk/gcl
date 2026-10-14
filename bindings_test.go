@@ -11,28 +11,12 @@ import (
 	"github.com/keyolk/tuikit/keys"
 )
 
-// uppercaseOnly are the actions whose only key is an uppercase letter a 2-set
-// Korean input source cannot type (shift+ㅁ is still ㅁ, which maps to `a`).
-// They predate the check and have no free lowercase key that reads well; every
-// other action has a reachable key. A new uppercase-only binding fails the
-// test below instead of a Korean-layout user.
-var uppercaseOnly = []string{"attendees", "links", "new", "dup", "view.month", "slots.hours"}
-
+// No filtering: Conflicts judges reachability per action, so an uppercase key
+// with a lowercase alias passes, and the keys meant to be Latin-only say so on
+// the binding (LatinOnly). A new uppercase-only binding fails here instead of
+// a Korean-layout user.
 func TestKeymapHasNoConflicts(t *testing.T) {
-	km := baseKeymap
-	byAction := map[string][]string{}
-	for _, bnd := range km.Bindings() {
-		byAction[bnd.Action] = append(byAction[bnd.Action], bnd.Keys...)
-	}
-	for _, c := range km.Conflicts(allStacks...) {
-		if c.Kind == keys.Unreachable {
-			// An action with another reachable key is still usable; only an
-			// action left with no reachable key is a problem.
-			a := c.Actions[0]
-			if slices.ContainsFunc(byAction[a], keys.ReachableUnderCJK) || slices.Contains(uppercaseOnly, a) {
-				continue
-			}
-		}
+	for _, c := range baseKeymap.Conflicts(allStacks...) {
 		t.Error(c)
 	}
 }
