@@ -1013,24 +1013,6 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	// Confirm-submit overlay: y/Enter actually creates/updates; n/ESC
-	// returns to the form (not to normal mode, so an in-progress edit isn't lost).
-	if m.mode == modeConfirmSubmit {
-		switch key {
-		case "y", "Y", "enter":
-			c := &m.create
-			c.finalizeAttendees()
-			c.submitting = true
-			c.err = ""
-			m.status = "creating~"
-			return m, m.submitCreateCmd()
-		case "n", "N", "esc":
-			m.mode = modeCreate
-			return m, nil
-		}
-		return m, nil
-	}
-
 	// A pending yank prefix owns the next key before quick actions get a chance
 	// to interpret it (notably, `ys` copies start instead of saving a staged move).
 	if m.yankPending {
