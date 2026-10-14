@@ -1,11 +1,9 @@
 package main
 
 import (
-	"slices"
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/toast"
 )
 
@@ -50,10 +48,10 @@ func (m *model) push(src string, level toast.Level, text string) {
 }
 
 func (m *model) pushTTL(src string, level toast.Level, text string, ttl time.Duration) {
-	// The expiry tick is not returned here: helpers that report are called
-	// from code that already returns its own Cmd. Update schedules the ticks
-	// for every toast that is new after the handler ran (toastTicks).
-	m.toasts, _ = toast.Push(m.toasts, toast.Toast{Source: src, Level: level, Text: text, TTL: ttl})
+	// Add returns no expiry tick: helpers that report are called from code
+	// that already returns its own Cmd. Update starts the ticks owed for every
+	// toast added while the handler ran (toast.Ticks).
+	m.toasts = toast.Add(m.toasts, toast.Toast{Source: src, Level: level, Text: text, TTL: ttl})
 }
 
 // statusText is every toast's text, oldest first, joined for tests and for
@@ -66,40 +64,13 @@ func (m model) statusText() string {
 	return strings.Join(parts, " | ")
 }
 
-// toastTicks starts the expiry timer of every toast in after that was not in
-// before. Push returns that timer, but the say/fail helpers run deep inside
-// handlers that return their own Cmd, so threading it out of each of ~100
-// call sites would be noise. The tick is rebuilt here from the kit's own
-// ExpiredMsg, so the id/arm guard still applies: a toast replaced before its
-// timer fires is not removed by that timer.
-func toastTicks(before, after toast.Queue) tea.Cmd {
-	var old []uint64
-	for _, t := range before.Items() {
-		old = append(old, t.ID())
-	}
-	var cmds []tea.Cmd
-	for _, t := range after.Items() {
-		if slices.Contains(old, t.ID()) || t.Level == toast.Error {
-			continue
-		}
-		msg, ok := after.ExpiredMsg(t.ID())
-		if !ok {
-			continue
-		}
-		ttl := t.TTL
-		if ttl <= 0 {
-			ttl = toast.DefaultTTL
-		}
-		cmds = append(cmds, tea.Tick(ttl, func(time.Time) tea.Msg { return msg }))
-	}
-	return tea.Batch(cmds...)
-}
-
 // statusView draws the toasts, one line each, in exactly statusRows rows: an
 // empty queue still keeps its row, so the hint bar does not jump when the last
 // toast goes. When the terminal is too short for every toast, the newest win.
 func (m model) statusView() string {
-	lines := strings.Split(asciiEllipsis(toast.View(m.toasts, m.width, ui.ToastStyles())), "\n")
+	st := ui.ToastStyles()
+	st.Ellipsis = cutMarker
+	lines := strings.Split(toast.View(m.toasts, m.width, st), "\n")
 	if n := m.statusRows(); len(lines) > n {
 		lines = lines[len(lines)-n:]
 	}
@@ -112,12 +83,11 @@ func (m model) statusRows() int {
 	return max(1, min(m.toasts.Len(), m.height-6))
 }
 
-// asciiEllipsis swaps the kit's "…" cut marker for "~". U+2026 is East Asian
-// ambiguous: KR/JP terminals draw it two cells wide, so a line measured as
-// fitting would overflow by one and wrap, stealing a row (the same reason
-// detailStyle has no border and the hint bar uses ASCII separators). "~" is
-// what gcl's own truncate already uses. Both measure one cell, so widths
-// computed before the swap stay right.
-func asciiEllipsis(s string) string {
-	return strings.ReplaceAll(s, "…", "~")
-}
+// cutMarker marks text cut to fit, in gcl's own truncation and in the kit's
+// footer, help and toasts. Not "…": U+2026 is East Asian ambiguous, so KR/JP
+// terminals draw it two cells wide and a line measured as fitting overflows
+// by one and wraps, stealing a row (the same reason detailStyle has no border
+// and the hint bar uses ASCII separators). The kit only switches to "~" under
+// a CJK locale; the cell width is the terminal's setting, not the locale's,
+// so gcl pins it.
+const cutMarker = "~"

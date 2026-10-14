@@ -4,7 +4,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
 	"github.com/keyolk/tuikit/keys"
 )
 
@@ -34,11 +33,7 @@ var formHelpStacks = [][]keys.Ctx{
 }
 
 func note(title string, lines ...string) keys.Section {
-	s := keys.Section{Title: title}
-	for _, l := range lines {
-		s.Entries = append(s.Entries, keys.Entry{Help: l})
-	}
-	return s
+	return keys.Section{Title: title, Notes: lines}
 }
 
 // helpNotes is the main help's prose. ASCII separators only: these lines
@@ -119,12 +114,8 @@ func (m model) helpPage() (lines []string, offset int) {
 	secs = inReadingOrder(secs)
 	st := ui.HelpStyle()
 	st.Names = helpNames
-	secs = append(secs, wrapNotes(secs, notes, w)...)
-	lines, offset = keys.RenderHelp(secs, w, rows, m.helpOff, st)
-	for i := range lines {
-		lines[i] = asciiEllipsis(lines[i])
-	}
-	return lines, offset
+	st.Ellipsis = cutMarker
+	return keys.RenderHelp(append(secs, notes...), w, rows, m.helpOff, st)
 }
 
 // helpOrder is the order sections are read in. Help orders them by where the
@@ -159,31 +150,4 @@ func (m model) helpSize() (w, h int) {
 func (m model) helpBodySize() (w, rows int) {
 	pw, ph := m.helpSize()
 	return max(10, pw-4), max(1, ph-4)
-}
-
-// wrapNotes word-wraps note entries to the description column RenderHelp will
-// give them. Entries have no keys, so the column starts after the widest key
-// list on the page — the same arithmetic as RenderHelp.
-func wrapNotes(secs, notes []keys.Section, width int) []keys.Section {
-	keyW := 0
-	for _, s := range secs {
-		for _, e := range s.Entries {
-			names := make([]string, len(e.Keys))
-			for i, k := range e.Keys {
-				names[i] = helpNames.Name(k)
-			}
-			keyW = max(keyW, ansi.StringWidth(strings.Join(names, "/")))
-		}
-	}
-	descW := max(10, width-min(keyW, width/3)-4)
-	out := make([]keys.Section, len(notes))
-	for i, s := range notes {
-		out[i] = keys.Section{Title: s.Title}
-		for _, e := range s.Entries {
-			for _, l := range strings.Split(ansi.Wordwrap(e.Help, descW, ""), "\n") {
-				out[i].Entries = append(out[i].Entries, keys.Entry{Help: l})
-			}
-		}
-	}
-	return out
 }

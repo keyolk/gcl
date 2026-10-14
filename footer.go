@@ -19,7 +19,7 @@ var footerNames = keys.Names{}.With("enter", "ret").With("down", "dn")
 
 // hintKeyStyle is plain on purpose: the hint bar is drawn inside one background
 // style, and per-hint styling would reset that background mid-line.
-var hintKeyStyle = keys.FooterStyle{Names: footerNames}
+var hintKeyStyle = keys.FooterStyle{Names: footerNames, Ellipsis: cutMarker}
 
 // shortcutHint is the hint bar's text for the current state.
 func (m model) shortcutHint() string {
@@ -42,7 +42,7 @@ func (m model) bar(width int, title string, stack ...keys.Ctx) string {
 		prefix += title + "  "
 	}
 	rest := max(0, width-lipgloss.Width(prefix))
-	return asciiEllipsis(prefix + m.keymap().Footer(stack, rest, m.keyOpts(), hintKeyStyle))
+	return prefix + m.keymap().Footer(stack, rest, m.keyOpts(), hintKeyStyle)
 }
 
 // footerContext picks the bar's title and the contexts it lists. It follows
@@ -109,5 +109,5 @@ func (m model) unsavedTitle(width int) string {
 // keyHint is a muted key line for inside a popup, from the same table as the
 // bar, so the popup cannot advertise a key that does something else.
 func (m model) keyHint(width int, stack ...keys.Ctx) string {
-	return mutedStyle.Render(asciiEllipsis(m.keymap().Footer(stack, width, m.keyOpts(), hintKeyStyle)))
+	return mutedStyle.Render(m.keymap().Footer(stack, width, m.keyOpts(), hintKeyStyle))
 }

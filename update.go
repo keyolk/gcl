@@ -72,7 +72,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	}
 	nm, save := nm.saveUIState(state)
-	return nm, tea.Batch(cmd, save, toastTicks(before, nm.toasts))
+	return nm, tea.Batch(cmd, save, toast.Ticks(before, nm.toasts))
 }
 
 func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
