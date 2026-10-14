@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyolk/tuikit/prefs"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/toast"
 )
@@ -63,19 +65,34 @@ func (m model) notifyScanCmd() tea.Cmd {
 const reminderTTL = 30 * time.Second
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	before := m.toasts
+	before, state := m.toasts, m.uiState()
 	next, cmd := m.update(msg)
 	nm, ok := next.(model)
 	if !ok {
 		return next, cmd
 	}
-	return nm, tea.Batch(cmd, toastTicks(before, nm.toasts))
+	nm, save := nm.saveUIState(state)
+	return nm, tea.Batch(cmd, save, toastTicks(before, nm.toasts))
 }
 
 func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case toast.Expired:
 		m.toasts = toast.Update(m.toasts, msg)
+		return m, nil
+	case prefs.SaveTick:
+		var cmd tea.Cmd
+		m.saver, cmd = m.saver.Update(msg)
+		return m, cmd
+	case prefs.Saved:
+		if msg.Final {
+			// Quitting: the latest state is on disk (or failed to get there,
+			// which must not keep the user from leaving).
+			return m, tea.Quit
+		}
+		if msg.Err != nil {
+			m.fail(srcFiles, "save UI state: "+msg.Err.Error())
+		}
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -168,7 +185,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case recentsSavedMsg:
 		if msg.err != nil {
 			// The switch itself worked; only the recents list is stale.
-			m.fail(srcRecents, msg.err.Error())
+			m.fail(srcFiles, msg.err.Error())
 		}
 		return m, nil
 	case statusMsg:

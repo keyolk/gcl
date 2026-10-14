@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyolk/tuikit/prefs"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/keys"
 )
@@ -119,6 +121,13 @@ func main() {
 		loading:        true,
 		nextReqID:      1,
 		inflightReq:    1,
+	}
+	m.saver = prefs.NewSaver[uiState](appName, 0)
+	m.persist = true
+	st, stErr := loadUIState()
+	st.apply(&m)
+	if stErr != nil {
+		m.fail(srcFiles, "UI state not restored: "+stErr.Error())
 	}
 	if keysErr != nil {
 		// Shown in the TUI, not on stderr: the alt screen would hide a

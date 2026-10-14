@@ -25,11 +25,11 @@ import (
 // Toast sources. A source groups messages that supersede each other: the next
 // load result replaces the last one, error or not.
 const (
-	srcStatus  = "status"  // answers to a key press
-	srcLoad    = "load"    // fetch results
-	srcNotify  = "notify"  // reminder scans
-	srcAction  = "action"  // writes to Google: create, delete, save, undo, copy
-	srcRecents = "recents" // the recent-calendars file
+	srcStatus = "status" // answers to a key press
+	srcLoad   = "load"   // fetch results
+	srcNotify = "notify" // reminder scans
+	srcAction = "action" // writes to Google: create, delete, save, undo, copy
+	srcFiles  = "files"  // recents list and UI state on disk
 )
 
 // say shows an informational answer to what the user just did.

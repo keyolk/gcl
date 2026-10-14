@@ -505,11 +505,6 @@ func (m model) runSchedule(action string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// quit leaves the program.
-func (m model) quit() (tea.Model, tea.Cmd) {
-	return m, tea.Quit
-}
-
 // trimLastRune drops the final rune, for backspace handling.
 func trimLastRune(s string) string {
 	if s == "" {

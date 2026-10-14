@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyolk/tuikit/prefs"
+
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/toast"
 )
@@ -195,6 +197,10 @@ type model struct {
 	toasts      toast.Queue // the status line; see status.go
 	km          keys.Keymap // the key table with user overrides; zero means baseKeymap
 	helpOff     int         // first line shown on the help page (clamped by RenderHelp)
+	// saver writes uiState (uistate.go); persist is false for a model that was
+	// not built by main, so tests never touch the real state file.
+	saver       prefs.Saver[uiState]
+	persist     bool
 	err         error
 	width       int
 	height      int
