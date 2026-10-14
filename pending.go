@@ -163,7 +163,7 @@ func (m *model) stagePending(ev *Event, startDelta, endDelta time.Duration, days
 		return "all-day events cannot be nudged"
 	}
 	if m.pending != nil && (m.pending.eventID != ev.ID || m.pending.calendar != m.eventCalendar(ev)) {
-		return "unsaved change on \"" + m.pending.title + "\" — s to save or esc to discard first"
+		return "unsaved change on \"" + m.pending.title + "\" — " + m.resolveHint() + " first"
 	}
 
 	// Copy rather than mutate in place: the previous model value is still
@@ -293,4 +293,9 @@ func (m model) effectiveTimes(ev *Event) (start, end time.Time, unsaved bool) {
 // pendingBadge is the compact row marker for a staged change: "!+1d".
 func pendingBadge(p *pendingShift) string {
 	return "!" + p.label()
+}
+
+// resolveHint names the keys that save or discard a staged change.
+func (m model) resolveHint() string {
+	return m.keyName(ctxPending, "save") + " to save, " + m.keyName(ctxPending, "discard") + " to discard"
 }

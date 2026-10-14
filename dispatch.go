@@ -165,7 +165,7 @@ func (m model) runSchedule(action string) (tea.Model, tea.Cmd) {
 		// an explicit discard (esc) or save (s) first. ctrl+c is the abort and
 		// does not ask.
 		if m.pending != nil {
-			m.warn("unsaved " + m.pending.label() + " on \"" + m.pending.title + "\" — s to save, esc to discard, then q")
+			m.warn("unsaved " + m.pending.label() + " on \"" + m.pending.title + "\" — " + m.resolveHint() + ", then " + m.keyName(ctxGlobal, "quit"))
 			return m, nil
 		}
 		return m.quit()

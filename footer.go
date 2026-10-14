@@ -111,3 +111,15 @@ func (m model) unsavedTitle(width int) string {
 func (m model) keyHint(width int, stack ...keys.Ctx) string {
 	return mutedStyle.Render(m.keymap().Footer(stack, width, m.keyOpts(), hintKeyStyle))
 }
+
+// keyName is the key that runs action in ctx, as the bar spells it, for
+// prose that names a key ("u to undo", "s to save"): with a keys.yaml
+// override the hard-coded letter would point at the wrong key. The context is
+// explicit because a note can land while a modal owns the keyboard, and it
+// names the key for when the user is back where the action lives.
+func (m model) keyName(ctx keys.Ctx, action string) string {
+	if k, ok := m.keymap().KeyFor([]keys.Ctx{ctx}, action, keys.Opts{}); ok {
+		return footerNames.Name(k)
+	}
+	return action
+}

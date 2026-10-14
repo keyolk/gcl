@@ -88,7 +88,7 @@ func (m model) viewDetailCard(width, height int) string {
 			lines = append(lines, mutedStyle.Render(truncate("  from "+before, iw)))
 			lines = append(lines, pendingStyle.Render(truncate("  to   "+after, iw)))
 		}
-		lines = append(lines, mutedStyle.Render(truncate("  s saves · esc discards", iw)))
+		lines = append(lines, mutedStyle.Render(truncate("  "+m.keyName(ctxPending, "save")+" saves · "+m.keyName(ctxPending, "discard")+" discards", iw)))
 	}
 	if isActiveAt(ev, time.Now()) {
 		// How long it has been running matters for a maintenance window in a way

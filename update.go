@@ -241,9 +241,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		n := len(m.create.attendees)
 		if n > 0 {
-			m.done(srcAction, fmt.Sprintf("%s \"%s\" | invited %d · u to undo", verb, m.create.title, n))
+			m.done(srcAction, fmt.Sprintf("%s \"%s\" | invited %d · %s to undo", verb, m.create.title, n, m.keyName(ctxSchedule, "undo")))
 		} else {
-			m.done(srcAction, fmt.Sprintf("%s \"%s\" · u to undo", verb, m.create.title))
+			m.done(srcAction, fmt.Sprintf("%s \"%s\" · %s to undo", verb, m.create.title, m.keyName(ctxSchedule, "undo")))
 		}
 		// Record undo. A create is reversed by deleting; a patch is reversed by
 		// restoring the pre-edit field values captured when the form opened.
@@ -273,7 +273,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.restore != nil {
 			m.lastUndo = msg.restore
-			m.done(srcAction, fmt.Sprintf("deleted \"%s\" · u to undo", msg.restore.label))
+			m.done(srcAction, fmt.Sprintf("deleted \"%s\" · %s to undo", msg.restore.label, m.keyName(ctxSchedule, "undo")))
 		} else {
 			m.done(srcAction, "event deleted")
 		}
@@ -297,7 +297,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				p := *m.pending
 				p.saving = false
 				m.pending = &p
-				m.fail(srcAction, "save failed: "+msg.err.Error()+" · s retries, esc discards")
+				m.fail(srcAction, "save failed: "+msg.err.Error()+" · "+m.keyName(ctxPending, "save")+" retries, "+m.keyName(ctxPending, "discard")+" discards")
 				return m, nil
 			}
 			m.fail(srcAction, "shift failed: "+msg.err.Error())
@@ -307,7 +307,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pending = nil
 		}
 		m.lastUndo = msg.restore
-		m.done(srcAction, msg.label+" · u to undo")
+		m.done(srcAction, msg.label+" · "+m.keyName(ctxSchedule, "undo")+" to undo")
 		m.loading = true
 		return m, m.reload()
 	case tea.KeyMsg:

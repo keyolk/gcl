@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -211,5 +212,23 @@ func TestCtrlCQuitsPastAnUnsavedNudge(t *testing.T) {
 	_, cmd = m.handleKey(keyMsg("ctrl+c"))
 	if !isQuit(cmd) {
 		t.Fatal("ctrl+c did not quit past the unsaved-nudge warning")
+	}
+}
+
+// Prose that names a key follows the user's overrides: "u to undo" must not
+// point at u once keys.yaml moved undo elsewhere.
+func TestNotesNameTheOverriddenKey(t *testing.T) {
+	km, err := baseKeymap.Override(map[string][]string{"undo": {"b"}}, allStacks...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := loadedModel()
+	m.km = km
+	next, _ := m.Update(eventShiftedMsg{label: "duplicated \"x\""}) // the reload Cmd is not run
+	if got := next.(model).statusText(); !strings.Contains(got, "b to undo") {
+		t.Errorf("status = %q, want the overridden undo key", got)
+	}
+	if got := loadedModel().keyName(ctxPending, "discard"); got != "esc" {
+		t.Errorf("discard key = %q, want esc", got)
 	}
 }

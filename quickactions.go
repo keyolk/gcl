@@ -230,8 +230,8 @@ func (m model) runQuick(action string) (tea.Model, tea.Cmd, bool) {
 			// Quick saves pass Notify:false. Moving a meeting without telling
 			// the people in it is a real hazard, so say it plainly instead of
 			// leaving it to the source comment.
-			m.warn(fmt.Sprintf("saving %s~ · %d %s NOT notified (E to edit and notify)",
-				label, n, plural(n, "attendee", "attendees")))
+			m.warn(fmt.Sprintf("saving %s~ · %d %s NOT notified (%s to edit and notify)",
+				label, n, plural(n, "attendee", "attendees"), m.keyName(ctxSchedule, "edit")))
 		} else {
 			cmd = m.running("saving "+label+"~", cmd)
 		}
