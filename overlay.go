@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/keyolk/tuikit/render"
 )
 
 // Overlaying several people's calendars in one agenda.
@@ -248,10 +249,9 @@ func shortLoadError(err error) string {
 	case strings.Contains(msg, "not found"):
 		return "not found"
 	}
-	if len(msg) > 24 {
-		return msg[:24] + "~"
-	}
-	return msg
+	// Cut by cells, not bytes: a byte cut can split a Korean error message
+	// mid-rune.
+	return render.TruncateMarker(msg, 25, cutMarker)
 }
 
 // newOverlayState seeds the picker. The currently-open calendar is
@@ -299,32 +299,29 @@ func (o overlayState) picked() []string {
 	return out
 }
 
-// handleOverlayKey owns every key while the overlay picker is open.
-func (m model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
+// runOverlay drives the overlay calendar picker; printable keys filter.
+func (m model) runOverlay(action string) (tea.Model, tea.Cmd) {
 	o := &m.overlay
-
 	cands := filterPickerItems(o.cands, o.input)
-	switch key {
-	case "esc":
+	switch action {
+	case "overlay.cancel":
 		m.mode = modeNormal
-		return m, nil
-	case "down", "ctrl+n", "ctrl+j":
+	case "overlay.down":
 		if len(cands) > 0 {
 			o.candIdx = (o.candIdx + 1) % len(cands)
 		}
-	case "up", "ctrl+p", "ctrl+k":
+	case "overlay.up":
 		if len(cands) > 0 {
 			o.candIdx = (o.candIdx - 1 + len(cands)) % len(cands)
 		}
-	case " ", "space":
+	case "overlay.toggle":
 		if len(cands) > 0 {
 			o.toggle(cands[max(0, min(o.candIdx, len(cands)-1))].value)
 		} else if strings.Contains(strings.TrimSpace(o.input), "@") {
 			o.toggle(strings.TrimSpace(o.input))
 			o.input = ""
 		}
-	case "enter":
+	case "overlay.apply":
 		picked := o.picked()
 		m.mode = modeNormal
 		if len(picked) == 0 {
@@ -336,23 +333,18 @@ func (m model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Past the palette every extra person reuses a color, and the dots
 			// stop identifying anyone. Refuse rather than render a lie.
 			m.mode = modeOverlayPicker
-			m.status = fmt.Sprintf("at most %d calendars can be told apart by color", len(overlayColors))
+			m.warn(fmt.Sprintf("at most %d calendars can be told apart by color", len(overlayColors)))
 			return m, nil
 		}
 		o.active = picked
 		o.failed = map[string]string{}
 		m.dropLoadedEvents()
 		m.loading = true
-		m.status = fmt.Sprintf("overlaying %d calendars~", len(picked))
+		m.say(fmt.Sprintf("overlaying %d calendars~", len(picked)))
 		return m, m.reload()
-	case "backspace", "ctrl+h":
+	case "overlay.erase":
 		if o.input != "" {
 			o.input = trimLastRune(o.input)
-			o.candIdx = 0
-		}
-	default:
-		if isTypedRune(msg) {
-			o.input += msg.String()
 			o.candIdx = 0
 		}
 	}
@@ -365,7 +357,7 @@ func (m *model) clearOverlay() tea.Cmd {
 	m.overlay.failed = nil
 	m.dropLoadedEvents()
 	m.loading = true
-	m.status = "overlay off · back to " + m.calendarDisplayName()
+	m.say("overlay off · back to " + m.calendarDisplayName())
 	return m.reload()
 }
 
@@ -421,7 +413,7 @@ func (m model) viewOverlayPicker() string {
 			}
 		}
 	}
-	lines = append(lines, mutedStyle.Render("space toggle · Enter apply (none = off) · ESC cancel"))
+	lines = append(lines, m.keyHint(inner, ctxOverlay))
 	return modalStyle.Width(w).Height(min(len(lines)+2, max(8, m.height-4))).
 		Render(strings.Join(lines, "\n"))
 }

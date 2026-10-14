@@ -1,20 +1,29 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/prefs"
 )
 
-// isQuit reports whether a returned command is tea.Quit, by running it and
-// checking for the QuitMsg. tea.Quit is a plain func, so it cannot be compared
-// directly.
+// isQuit reports whether cmd ends the program: tea.Quit itself, or the final
+// UI-state flush, which Update answers with tea.Quit (tea.Quit is a plain
+// func, so it cannot be compared directly). A model literal holds
+// the zero Saver, whose flush reports Final at once without writing.
 func isQuit(cmd tea.Cmd) bool {
 	if cmd == nil {
 		return false
 	}
-	_, ok := cmd().(tea.QuitMsg)
-	return ok
+	switch msg := cmd().(type) {
+	case tea.QuitMsg:
+		return true
+	case prefs.Saved:
+		return msg.Final
+	}
+	return false
 }
 
 func TestNormalizeCJKKeyMapsJamoByPhysicalPosition(t *testing.T) {
@@ -23,9 +32,9 @@ func TestNormalizeCJKKeyMapsJamoByPhysicalPosition(t *testing.T) {
 		"ㅃ": "Q", "ㄲ": "R",
 	}
 	for jamo, want := range cases {
-		got := normalizeCJKKey(keyMsg(jamo)).String()
+		got := keys.NormalizeCJK(keyMsg(jamo)).String()
 		if got != want {
-			t.Errorf("normalizeCJKKey(%q) = %q, want %q", jamo, got, want)
+			t.Errorf("keys.NormalizeCJK(%q) = %q, want %q", jamo, got, want)
 		}
 	}
 }
@@ -34,25 +43,25 @@ func TestNormalizeCJKKeyLeavesEverythingElseAlone(t *testing.T) {
 	// Latin keys, digits, and composed syllables pass through: a composed
 	// syllable only reaches the TUI as committed text, never as a shortcut.
 	for _, k := range []string{"q", "R", "0", "가"} {
-		if got := normalizeCJKKey(keyMsg(k)).String(); got != k {
-			t.Errorf("normalizeCJKKey(%q) = %q, want it unchanged", k, got)
+		if got := keys.NormalizeCJK(keyMsg(k)).String(); got != k {
+			t.Errorf("keys.NormalizeCJK(%q) = %q, want it unchanged", k, got)
 		}
 	}
 	// Non-rune keys carry no jamo to map.
 	for _, in := range []tea.KeyMsg{{Type: tea.KeyEnter}, {Type: tea.KeyCtrlC}, {Type: tea.KeyEscape}} {
-		if got := normalizeCJKKey(in); got.String() != in.String() {
-			t.Errorf("normalizeCJKKey(%q) = %q, want it unchanged", in.String(), got.String())
+		if got := keys.NormalizeCJK(in); got.String() != in.String() {
+			t.Errorf("keys.NormalizeCJK(%q) = %q, want it unchanged", in.String(), got.String())
 		}
 	}
 }
 
 func TestNormalizeCJKKeyLeavesPasteAndAltAlone(t *testing.T) {
 	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'ㅂ'}, Paste: true}
-	if got := normalizeCJKKey(paste); got.String() != paste.String() {
+	if got := keys.NormalizeCJK(paste); got.String() != paste.String() {
 		t.Errorf("pasted jamo was rewritten to %q", got.String())
 	}
 	alt := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'ㅂ'}, Alt: true}
-	if got := normalizeCJKKey(alt); got.String() != alt.String() {
+	if got := keys.NormalizeCJK(alt); got.String() != alt.String() {
 		t.Errorf("alt chord was rewritten to %q", got.String())
 	}
 }
@@ -195,7 +204,7 @@ func TestCtrlCQuitsPastAnUnsavedNudge(t *testing.T) {
 	if isQuit(cmd) {
 		t.Fatal("q quit with an unsaved nudge staged; it must warn first")
 	}
-	if same.(model).status == "" {
+	if same.(model).statusText() == "" {
 		t.Fatal("q left no explanation for refusing to quit")
 	}
 
@@ -203,5 +212,23 @@ func TestCtrlCQuitsPastAnUnsavedNudge(t *testing.T) {
 	_, cmd = m.handleKey(keyMsg("ctrl+c"))
 	if !isQuit(cmd) {
 		t.Fatal("ctrl+c did not quit past the unsaved-nudge warning")
+	}
+}
+
+// Prose that names a key follows the user's overrides: "u to undo" must not
+// point at u once keys.yaml moved undo elsewhere.
+func TestNotesNameTheOverriddenKey(t *testing.T) {
+	km, err := baseKeymap.Override(map[string][]string{"undo": {"b"}}, allStacks...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := loadedModel()
+	m.km = km
+	next, _ := m.Update(eventShiftedMsg{label: "duplicated \"x\""}) // the reload Cmd is not run
+	if got := next.(model).statusText(); !strings.Contains(got, "b to undo") {
+		t.Errorf("status = %q, want the overridden undo key", got)
+	}
+	if got := loadedModel().keyName(ctxPending, "discard"); got != "esc" {
+		t.Errorf("discard key = %q, want esc", got)
 	}
 }

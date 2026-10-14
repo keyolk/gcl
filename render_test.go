@@ -34,7 +34,7 @@ func TestViewActivePanelShowsSpansAndCountdowns(t *testing.T) {
 	// Focused, it shows its own navigation keys instead.
 	m.focusPane = focusActive
 	focused := stripANSI(m.viewActivePanel(118, m.activePanelHeight(37)))
-	if !strings.Contains(focused, "j/k move") {
+	if !strings.Contains(focused, "jk move") {
 		t.Errorf("focused panel does not show its nav keys:\n%s", focused)
 	}
 }
@@ -159,7 +159,7 @@ func TestFrameFitsAtEverySize(t *testing.T) {
 	mk := func(w, h int, view viewMode, open bool) model {
 		return model{
 			width: w, height: h, view: view, anchor: today(), jumpUnit: "day",
-			calendar: "me", status: "loaded", activeOpen: open, gridTop: weekStart(today()),
+			calendar: "me", activeOpen: open, gridTop: weekStart(today()),
 			events: []Event{
 				{ID: "w", Title: "apne2 maintenance window",
 					StartDate: today().AddDate(0, 0, -2), EndDate: today().AddDate(0, 0, 2)},

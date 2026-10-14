@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/toast"
 )
 
 func yankTestModel() model {
@@ -43,7 +46,7 @@ func TestYankValueCopiesEventFields(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
-			label, got, ok := m.yankValue(tt.key)
+			label, got, ok := m.yankValue(yankAction(t, tt.key))
 			if !ok {
 				t.Fatalf("yankValue(%q) was not handled", tt.key)
 			}
@@ -60,7 +63,7 @@ func TestYankSummaryIncludesShareableEventDetails(t *testing.T) {
 	t.Cleanup(func() { settings = oldSettings })
 
 	m := yankTestModel()
-	label, got, ok := m.yankValue("y")
+	label, got, ok := m.yankValue(yankAction(t, "y"))
 	if !ok || label != "event summary" {
 		t.Fatalf("yy = (%q, handled=%v), want event summary", label, ok)
 	}
@@ -144,8 +147,8 @@ func TestYankPrefixCancelAndUnknownKeyAreConsumed(t *testing.T) {
 	m = started.(model)
 	cancelled, cmd := m.handleKey(keyMsg("esc"))
 	m = cancelled.(model)
-	if cmd != nil || m.yankPending || m.status != "yank cancelled" {
-		t.Errorf("y esc = pending=%v status=%q cmd=%v", m.yankPending, m.status, cmd != nil)
+	if cmd != nil || m.yankPending || m.statusText() != "yank cancelled" {
+		t.Errorf("y esc = pending=%v status=%q cmd=%v", m.yankPending, m.statusText(), cmd != nil)
 	}
 
 	started, _ = m.handleKey(keyMsg("y"))
@@ -158,8 +161,8 @@ func TestYankPrefixCancelAndUnknownKeyAreConsumed(t *testing.T) {
 	if m.selected != 0 {
 		t.Errorf("yj moved selection to %d; the suffix must not fall through", m.selected)
 	}
-	if m.status != "unknown yank key: j" {
-		t.Errorf("status = %q", m.status)
+	if m.statusText() != "unknown yank key: j" {
+		t.Errorf("status = %q", m.statusText())
 	}
 }
 
@@ -170,15 +173,33 @@ func TestYankPrefixHandlesSelectionDisappearing(t *testing.T) {
 	if cmd != nil || got.yankPending {
 		t.Errorf("missing selection should clear prefix without a command; pending=%v cmd=%v", got.yankPending, cmd != nil)
 	}
-	if got.status != "no event selected" {
-		t.Errorf("status = %q, want no event selected", got.status)
+	if got.statusText() != "no event selected" {
+		t.Errorf("status = %q, want no event selected", got.statusText())
 	}
 }
 
 func TestClipboardResultUpdatesStatus(t *testing.T) {
 	m := model{}
 	updated, cmd := m.Update(clipboardCopiedMsg{label: "description"})
-	if cmd != nil || updated.(model).status != "copied description" {
-		t.Errorf("success status = %q, cmd=%v", updated.(model).status, cmd != nil)
+	if updated.(model).statusText() != "copied description" {
+		t.Errorf("success status = %q", updated.(model).statusText())
 	}
+	// The only Cmd is the toast's own expiry timer.
+	if cmd == nil {
+		t.Error("a success toast was pushed without an expiry tick")
+	}
+	if items := updated.(model).toasts.Items(); len(items) != 1 || items[0].Level != toast.Success {
+		t.Errorf("toasts = %+v, want one success", items)
+	}
+}
+
+// yankAction is the action the key after y resolves to, so these tests keep
+// checking the key as well as what it copies.
+func yankAction(t *testing.T, key string) string {
+	t.Helper()
+	bnd, ok := baseKeymap.Resolve([]keys.Ctx{ctxYank}, keyMsg(key), keys.Opts{})
+	if !ok {
+		t.Fatalf("y%s is not bound", key)
+	}
+	return bnd.Action
 }

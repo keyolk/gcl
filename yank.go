@@ -10,70 +10,56 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// yankHints is the `y` prefix bar. `esc cancel` is pinned: it is how you get
-// out of a prefix you did not mean to start, and on a narrow pane a plain
-// string would have truncated exactly that.
-func yankHints() []hint {
-	return []hint{
-		{key: "yank", prio: prioNav},
-		{key: "y", label: "summary", prio: prioAct},
-		{key: "u", label: "calendar URL", prio: prioAct},
-		{key: "s", label: "start", prio: prioExtra},
-		{key: "e", label: "end", prio: prioExtra},
-		{key: "d", label: "description", prio: prioExtra},
-		{key: "esc", label: "cancel", prio: prioEscape},
-	}
-}
-
 type clipboardCopiedMsg struct {
 	label string
 	err   error
 }
 
-// handleYankKey consumes the key following `y`. Unknown keys cancel the prefix
-// instead of falling through to another action, matching the behavior of other
-// two-key command families.
-func (m model) handleYankKey(key string) (tea.Model, tea.Cmd) {
+// runYank consumes the action bound to the key after `y`. Keys with no yank
+// binding cancel the prefix (see unbound) instead of falling through to
+// another action, matching the behavior of other two-key command families.
+func (m model) runYank(action string) (tea.Model, tea.Cmd) {
 	m.yankPending = false
-	if key == "esc" {
-		m.status = "yank cancelled"
+	if action == "yank.cancel" {
+		m.say("yank cancelled")
 		return m, nil
 	}
 	if m.currentActionEvent() == nil {
-		m.status = "no event selected"
+		m.warn("no event selected")
 		return m, nil
 	}
 
-	label, value, ok := m.yankValue(key)
+	label, value, ok := m.yankValue(action)
 	if !ok {
-		m.status = "unknown yank key: " + key
+		m.warn("unknown yank action: " + action)
 		return m, nil
 	}
 	if value == "" {
-		m.status = "selected event has no " + label
+		m.warn("selected event has no " + label)
 		return m, nil
 	}
 
-	m.status = "copying " + label + "~"
-	return m, copyToClipboardCmd(label, value)
+	cmd := m.running("copying "+label+"~", copyToClipboardCmd(label, value))
+	return m, cmd
 }
 
-func (m model) yankValue(key string) (label, value string, ok bool) {
+// yankValue is what a yank action copies, and the label it is reported by.
+func (m model) yankValue(action string) (label, value string, ok bool) {
 	ev := m.currentActionEvent()
 	if ev == nil {
 		return "event", "", true
 	}
 
-	switch key {
-	case "y":
+	switch action {
+	case "yank.summary":
 		return "event summary", m.yankSummary(ev), true
-	case "u":
+	case "yank.url":
 		return "calendar URL", eventCalendarURL(ev), true
-	case "s":
+	case "yank.start":
 		return "start timestamp", m.yankTimestamp(ev, true), true
-	case "e":
+	case "yank.end":
 		return "end timestamp", m.yankTimestamp(ev, false), true
-	case "d":
+	case "yank.desc":
 		return "description", ev.Description, true
 	default:
 		return "", "", false

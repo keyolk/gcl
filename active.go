@@ -221,7 +221,8 @@ func (m model) viewActivePanel(width, height int) string {
 	title := fmt.Sprintf(" ◉ Active now (%d) · %s ", len(evs), now.In(m.tz()).Format("15:04"))
 	var lines []string
 	if focused {
-		lines = append(lines, sectionTitleStyle.Render(title)+" "+mutedStyle.Render("j/k move · Enter jump · esc back to schedule"))
+		head := sectionTitleStyle.Render(title)
+		lines = append(lines, head+" "+m.keyHint(max(0, inner-lipgloss.Width(head)-1), ctxPanel))
 	} else {
 		// Unfocused, the panel advertises how to get into it — otherwise `tab`
 		// is as undiscoverable as `e` used to be.

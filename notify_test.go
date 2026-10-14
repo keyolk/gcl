@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -52,20 +53,21 @@ func TestSendToastWithoutSinkNeverPrints(t *testing.T) {
 // A reminder that could not be toasted is surfaced in the status line rather
 // than dropped; a scan error is shown rather than swallowed.
 func TestNotifyResultReachesStatus(t *testing.T) {
-	m := model{status: "loaded 3 events"}
+	m := model{}
+	m.say("loaded 3 events")
 	got, _ := m.Update(notifyResultMsg{fired: 1, shown: []string{"gcal: in 5m  standup"}})
-	if s := got.(model).status; !strings.Contains(s, "standup") {
+	if s := got.(model).statusText(); !strings.Contains(s, "standup") {
 		t.Errorf("status = %q, want the undelivered reminder", s)
 	}
 
 	got, _ = m.Update(notifyResultMsg{err: errors.New("token expired")})
-	if s := got.(model).status; !strings.Contains(s, "reminder failed") || !strings.Contains(s, "token expired") {
+	if s := got.(model).statusText(); !strings.Contains(s, "reminder failed") || !strings.Contains(s, "token expired") {
 		t.Errorf("status = %q, want the scan error", s)
 	}
 
 	// A quiet pass (nothing due) must not clobber whatever status is up.
 	got, _ = m.Update(notifyResultMsg{})
-	if s := got.(model).status; s != "loaded 3 events" {
+	if s := got.(model).statusText(); s != "loaded 3 events" {
 		t.Errorf("empty scan changed status to %q", s)
 	}
 }
@@ -83,7 +85,8 @@ func TestMarkNotifiedReportsWriteFailure(t *testing.T) {
 }
 
 // Picking a calendar still switches when the recents file can't be written, but
-// the failure has to be visible after the load lands instead of vanishing.
+// the failure has to be visible instead of vanishing. The write runs in a Cmd,
+// never inside Update.
 func TestChooseCalendarSurfacesRecentsWriteFailure(t *testing.T) {
 	blocker := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
@@ -91,13 +94,47 @@ func TestChooseCalendarSurfacesRecentsWriteFailure(t *testing.T) {
 	}
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(blocker, "sub"))
 
-	m := model{mode: modeCalendarPicker, picker: pickerState{kind: pickerCalendar}}
+	m := model{mode: modeCalendarPicker, picker: pickerState{kind: pickerCalendar},
+		recents: []string{"old@example.com"}}
 	got, _ := m.choosePicker(pickerItem{label: "team", value: "team@example.com"})
 	gm := got.(model)
 	if gm.calendar != "team@example.com" {
 		t.Fatalf("calendar = %q, want switch to proceed", gm.calendar)
 	}
-	if !strings.Contains(gm.pendingNote, "save recent calendars") {
-		t.Errorf("pendingNote = %q, want the recents write error", gm.pendingNote)
+	if want := []string{"team@example.com", "old@example.com"}; !slices.Equal(gm.recents, want) {
+		t.Errorf("recents = %v, want %v", gm.recents, want)
+	}
+	// The returned batch also reloads (Google API), so the save Cmd is run on
+	// its own.
+	msg := saveRecentsCmd(gm.recents)()
+	saved, ok := msg.(recentsSavedMsg)
+	if !ok || saved.err == nil || !strings.Contains(saved.err.Error(), "save recent calendars") {
+		t.Fatalf("save Cmd = %#v, want the write error", msg)
+	}
+	after, _ := gm.Update(saved)
+	if s := after.(model).statusText(); !strings.Contains(s, "save recent calendars") {
+		t.Errorf("status = %q, want the recents write error", s)
+	}
+}
+
+// choosePicker must not write the recents file itself: Update stays free of
+// disk IO, and the write happens when the returned Cmd runs.
+func TestChooseCalendarDoesNotWriteInsideUpdate(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
+	m := model{mode: modeCalendarPicker, picker: pickerState{kind: pickerCalendar}}
+	m.choosePicker(pickerItem{label: "team", value: "team@example.com"})
+	if _, err := os.Stat(recentCalendarsPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("recents file touched inside Update: %v", err)
+	}
+}
+
+// Recents read at startup go behind a pick that landed first.
+func TestRecentsLoadKeepsEarlierPicksInFront(t *testing.T) {
+	m := model{recents: []string{"new@x.com"}}
+	got, _ := m.Update(recentsMsg{list: []string{"a@x.com", "new@x.com", "b@x.com"}})
+	want := []string{"new@x.com", "a@x.com", "b@x.com"}
+	if r := got.(model).recents; !slices.Equal(r, want) {
+		t.Errorf("recents = %v, want %v", r, want)
 	}
 }

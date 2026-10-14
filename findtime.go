@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // "Find a time" — pick people, then pick a slot that works for all of them.
@@ -177,79 +176,65 @@ func (m *model) startFindSearch() tea.Cmd {
 	return m.runFindSlotsCmd()
 }
 
-// handleFindKey owns every key while the find-a-time overlay is open.
-func (m model) handleFindKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
+// runFind drives the find-a-time overlay: the participant picker (ctxPeople,
+// where printable keys filter) and then the slot list (ctxSlots).
+func (m model) runFind(action string) (tea.Model, tea.Cmd) {
 	f := &m.find
-
-	if f.step == findPeople {
-		cands := filterPickerItems(f.cands, f.input)
-		switch key {
-		case "esc":
-			m.mode = modeNormal
-			return m, nil
-		case "down", "ctrl+n", "ctrl+j":
-			if len(cands) > 0 {
-				f.candIdx = (f.candIdx + 1) % len(cands)
-			}
-		case "up", "ctrl+p", "ctrl+k":
-			if len(cands) > 0 {
-				f.candIdx = (f.candIdx - 1 + len(cands)) % len(cands)
-			}
-		case " ", "space":
-			// Space toggles the highlighted candidate; a typed-out email with no
-			// match is added directly, so someone outside the loaded events can
-			// still be included.
-			if len(cands) > 0 {
-				f.toggle(cands[max(0, min(f.candIdx, len(cands)-1))].value)
-			} else if strings.Contains(strings.TrimSpace(f.input), "@") {
-				f.toggle(strings.TrimSpace(f.input))
-				f.input = ""
-			}
-			f.err = ""
-		case "enter":
-			return m, m.startFindSearch()
-		case "backspace", "ctrl+h":
-			if f.input != "" {
-				f.input = trimLastRune(f.input)
-				f.candIdx = 0
-			}
-		default:
-			if isTypedRune(msg) {
-				f.input += msg.String()
-				f.candIdx = 0
-			}
+	cands := filterPickerItems(f.cands, f.input)
+	switch action {
+	case "people.cancel":
+		m.mode = modeNormal
+	case "people.down":
+		if len(cands) > 0 {
+			f.candIdx = (f.candIdx + 1) % len(cands)
 		}
-		return m, nil
-	}
+	case "people.up":
+		if len(cands) > 0 {
+			f.candIdx = (f.candIdx - 1 + len(cands)) % len(cands)
+		}
+	case "people.toggle":
+		// Space toggles the highlighted candidate; a typed-out email with no
+		// match is added directly, so someone outside the loaded events can
+		// still be included.
+		if len(cands) > 0 {
+			f.toggle(cands[max(0, min(f.candIdx, len(cands)-1))].value)
+		} else if strings.Contains(strings.TrimSpace(f.input), "@") {
+			f.toggle(strings.TrimSpace(f.input))
+			f.input = ""
+		}
+		f.err = ""
+	case "people.search":
+		return m, m.startFindSearch()
+	case "people.erase":
+		if f.input != "" {
+			f.input = trimLastRune(f.input)
+			f.candIdx = 0
+		}
 
-	// Slot step.
-	switch key {
-	case "esc":
+	case "slots.back":
 		// Back to the people picker rather than out of the flow: adjusting the
 		// participant set is the most common reason the slot list disappoints.
 		f.step = findPeople
 		f.err = ""
-		return m, nil
-	case "down", "j", "ctrl+n":
+	case "slots.down":
 		f.slotIdx = min(f.slotIdx+1, max(0, len(f.slots)-1))
-	case "up", "k", "ctrl+p":
+	case "slots.up":
 		f.slotIdx = max(0, f.slotIdx-1)
-	case "g", "home":
+	case "slots.first":
 		f.slotIdx = 0
-	case "G", "end":
+	case "slots.last":
 		f.slotIdx = max(0, len(f.slots)-1)
-	case "d":
+	case "slots.length":
 		// Cycle the meeting length and re-run. Duration is the parameter people
 		// actually renegotiate ("can we do 30 instead of an hour?").
 		f.search.duration = nextSlotDuration(f.search.duration)
 		f.loading = true
 		return m, m.runFindSlotsCmd()
-	case "w":
+	case "slots.weekends":
 		f.search.skipWeekends = !f.search.skipWeekends
 		f.loading = true
 		return m, m.runFindSlotsCmd()
-	case "H":
+	case "slots.hours":
 		// Toggle between the configured hours and a fully open day, so a search
 		// that finds nothing has one obvious thing left to try.
 		if f.search.dayStartHour == 0 && f.search.dayEndHour == 24 {
@@ -260,19 +245,18 @@ func (m model) handleFindKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		f.loading = true
 		return m, m.runFindSlotsCmd()
-	case "R":
+	case "slots.refresh":
 		f.loading = true
 		return m, m.runFindSlotsCmd()
-	case "enter":
+	case "slots.prefill":
 		if f.loading || len(f.slots) == 0 {
 			return m, nil
 		}
 		slot := f.slots[max(0, min(f.slotIdx, len(f.slots)-1))]
 		m.mode = modeCreate
 		m.create = m.createStateFromSlot(slot)
-		m.status = fmt.Sprintf("prefilled %s · title it and press Enter to create",
-			m.slotRangeLabel(slot))
-		return m, nil
+		m.say(fmt.Sprintf("prefilled %s · title it and press Enter to create",
+			m.slotRangeLabel(slot)))
 	}
 	return m, nil
 }
@@ -384,7 +368,7 @@ func (m model) viewFindPeople() string {
 	if f.err != "" {
 		lines = append(lines, errorStyle.Render("x "+f.err))
 	}
-	lines = append(lines, mutedStyle.Render("space toggle · Enter find slots · ESC cancel"))
+	lines = append(lines, m.keyHint(inner, ctxPeople))
 	return modalStyle.Width(w).Height(min(len(lines)+2, max(8, m.height-4))).Render(strings.Join(lines, "\n"))
 }
 
@@ -447,7 +431,7 @@ func (m model) viewFindSlots() string {
 		}
 	}
 
-	lines = append(lines, mutedStyle.Render("j/k move · Enter prefill form · d length · w weekends · H hours · esc who"))
+	lines = append(lines, m.keyHint(inner, ctxSlots))
 	return modalStyle.Width(w).Height(min(len(lines)+2, max(8, m.height-4))).Render(strings.Join(lines, "\n"))
 }
 
@@ -491,21 +475,3 @@ func shortNames(emails []string) string {
 	}
 	return strings.Join(short[:4], ", ") + fmt.Sprintf(" +%d", len(short)-4)
 }
-
-// trimLastRune drops the final rune, for backspace handling.
-func trimLastRune(s string) string {
-	if s == "" {
-		return s
-	}
-	r := []rune(s)
-	return string(r[:len(r)-1])
-}
-
-var (
-	// A fully-available slot is the answer; a partial one is a compromise. The
-	// two must not be told apart by reading digits.
-	slotAllFreeStyle = lipgloss.NewStyle().Bold(true).
-				Foreground(lipgloss.Color("232")).Background(lipgloss.Color("77"))
-	slotPartialStyle = lipgloss.NewStyle().Bold(true).
-				Foreground(lipgloss.Color("232")).Background(lipgloss.Color("214"))
-)

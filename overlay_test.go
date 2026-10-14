@@ -243,12 +243,12 @@ func TestOverlayPickerTogglesAndApplies(t *testing.T) {
 
 	got.overlay.cands = []pickerItem{{label: "jace@x.com", value: "jace@x.com"}}
 	got.overlay.input = ""
-	updated, _ = got.handleOverlayKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, _ = got.handleKey(tea.KeyMsg{Type: tea.KeySpace})
 	got = updated.(model)
 	if !got.overlay.selected["jace@x.com"] {
 		t.Fatal("space did not toggle the highlighted calendar on")
 	}
-	updated, cmd := got.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(model)
 	if !got.overlay.on() {
 		t.Fatal("Enter did not apply the overlay")
@@ -267,7 +267,7 @@ func TestOverlayPickerEmptySetTurnsItOff(t *testing.T) {
 	m := overlaidModel(170, 24)
 	m.mode = modeOverlayPicker
 	m.overlay.selected = map[string]bool{}
-	updated, cmd := m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(model)
 	if got.overlay.on() {
 		t.Errorf("an empty selection left the overlay on: %v", got.overlay.active)
@@ -285,7 +285,7 @@ func TestOverlayPickerRefusesMoreCalendarsThanColors(t *testing.T) {
 	for i := 0; i <= len(overlayColors); i++ {
 		m.overlay.selected[string(rune('a'+i))+"@x.com"] = true
 	}
-	updated, cmd := m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(model)
 	if got.overlay.on() {
 		t.Error("an over-large overlay was applied")
@@ -296,8 +296,8 @@ func TestOverlayPickerRefusesMoreCalendarsThanColors(t *testing.T) {
 	if cmd != nil {
 		t.Error("a refused overlay still triggered a load")
 	}
-	if !strings.Contains(got.status, "told apart") {
-		t.Errorf("status = %q, want it to explain the color limit", got.status)
+	if !strings.Contains(got.statusText(), "told apart") {
+		t.Errorf("status = %q, want it to explain the color limit", got.statusText())
 	}
 }
 
@@ -336,11 +336,11 @@ func TestOverlayLoadedMsgReportsUnreadableCalendars(t *testing.T) {
 	}
 	updated, _ := m.Update(msg)
 	got := updated.(model)
-	if !strings.Contains(got.status, "NOT loaded") {
-		t.Errorf("status = %q, want it to name the calendars that failed", got.status)
+	if !strings.Contains(got.statusText(), "NOT loaded") {
+		t.Errorf("status = %q, want it to name the calendars that failed", got.statusText())
 	}
-	if !strings.Contains(got.status, "yuna.kim") {
-		t.Errorf("status = %q, want the failed calendar named", got.status)
+	if !strings.Contains(got.statusText(), "yuna.kim") {
+		t.Errorf("status = %q, want the failed calendar named", got.statusText())
 	}
 	if got.loading {
 		t.Error("loading was left on after the overlay resolved")
@@ -376,15 +376,15 @@ func TestSwitchingCalendarClearsTheOverlay(t *testing.T) {
 	if cmd == nil {
 		t.Error("switching did not trigger a reload")
 	}
-	// The note has to survive the "loading~" the fetch installs and land with
-	// the events, or the user never learns the overlay was dropped.
-	if !strings.Contains(got.pendingNote, "overlay off") {
-		t.Errorf("pendingNote = %q, want it to say the overlay was turned off", got.pendingNote)
+	// The note is shown at once, and has to survive the load result that
+	// follows, or the user never learns the overlay was dropped.
+	if !strings.Contains(got.statusText(), "overlay off") {
+		t.Errorf("status = %q, want it to say the overlay was turned off", got.statusText())
 	}
 	settled, _ := got.Update(eventsMsg{reqID: got.inflightReq, start: got.anchor, end: got.anchor})
-	if !strings.Contains(settled.(model).status, "overlay off") {
+	if !strings.Contains(settled.(model).statusText(), "overlay off") {
 		t.Errorf("status after the load = %q, want the overlay-off note",
-			settled.(model).status)
+			settled.(model).statusText())
 	}
 }
 

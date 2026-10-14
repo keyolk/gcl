@@ -514,7 +514,7 @@ named underneath, because a 3/4 slot at a good hour often beats no slot at all.
 - `j` / `k`, `g` / `G` — move
 - `d` — cycle the meeting length (15/30/45/60/90/120m)
 - `w` — toggle weekends
-- `H` — open the day up to a full 24h and back to the configured hours
+- `H` or `h` — open the day up to a full 24h and back to the configured hours
 - `R` — re-read free/busy
 - `esc` — back to the participant picker (the usual fix for a disappointing list)
 - `Enter` — **prefill the new-event form** with that slot and those attendees
@@ -565,8 +565,8 @@ Details worth knowing:
 
 - `Enter` / `o` — open the Google Calendar event page
 - `L` — open the link picker (Zoom/docs/etc.)
-- `A` — open attendee picker and jump to that person's calendar
-- `N` — create a new event
+- `A` or `p` — open attendee picker and jump to that person's calendar
+- `N` or `c` — create a new event
 - `E` — edit selected/current event
 - `X` — delete selected/current event
 
@@ -624,7 +624,7 @@ dropping the first.
 
 ### Immediate actions
 
-- `D` — duplicate the event in place (title gets a `(copy)` suffix)
+- `D` or `+` — duplicate the event in place (title gets a `(copy)` suffix)
 - `W` — copy the event into the same slot next week
 - `u` — undo the last create / edit / delete / save
 

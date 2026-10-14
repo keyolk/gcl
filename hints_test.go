@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keyolk/tuikit/keys"
 )
 
 // hintModel is a list-view model at a given width, with the given events.
@@ -45,7 +47,10 @@ func TestHintBarAlwaysKeepsTheEscapeKeys(t *testing.T) {
 	// `?` and `q` fell off the right edge of the old bar at every width — the
 	// two keys a lost user needs most were the two reliably hidden.
 	ev := hintEvent([]string{"a@x.com"}, []string{"https://z/1"})
-	for _, w := range []int{16, 24, 40, 80, 200} {
+	// 15 is " ? help  q quit" exactly. Below 18 there is no room for the "~"
+	// that says others were dropped too, and the marker goes before a pinned
+	// hint does.
+	for _, w := range []int{15, 16, 17, 18, 24, 40, 80, 200} {
 		got := stripANSI(hintModel(w, ev).shortcutHint())
 		if !strings.Contains(got, "? help") || !strings.Contains(got, "q quit") {
 			t.Errorf("width %d dropped an escape key: %q", w, got)
@@ -104,7 +109,7 @@ func TestHintBarDropsWholeHintsRatherThanSlicingOne(t *testing.T) {
 	if strings.HasSuffix(strings.TrimSpace(got), "-") {
 		t.Errorf("bar ends mid-hint: %q", got)
 	}
-	for _, pair := range []string{"j/k select", "? help", "q quit"} {
+	for _, pair := range []string{"jk select", "? help", "q quit"} {
 		if strings.Contains(got, strings.Fields(pair)[0]+" ") &&
 			!strings.Contains(got, pair) {
 			t.Errorf("hint %q was rendered partially: %q", pair, got)
@@ -178,5 +183,34 @@ func TestModalHintsAreFittedToo(t *testing.T) {
 		if !strings.Contains(got, "esc") && !strings.Contains(got, "n/esc") {
 			t.Errorf("mode %v: no way out is shown: %q", mode, got)
 		}
+	}
+}
+
+// The h/l hint names the step it moves by, as hints.go did ("h/l week"): the
+// group label follows the list step through GroupLabels, not a fixed word.
+func TestHintBarNamesTheListStep(t *testing.T) {
+	for _, unit := range []string{"day", "week", "month"} {
+		m := hintModel(160, hintEvent(nil, nil))
+		m.jumpUnit = unit
+		if got := m.shortcutHint(); !strings.Contains(got, "hl "+unit) {
+			t.Errorf("step %s: bar %q does not read %q", unit, got, "hl "+unit)
+		}
+	}
+}
+
+// Korean-layout aliases reach the uppercase-only actions they stand in for.
+func TestKoreanReachableAliases(t *testing.T) {
+	km := baseKeymap
+	m := hintModel(160, hintEvent(nil, nil))
+	cases := map[string]string{"c": "new", "p": "attendees", "+": "dup"}
+	for key, want := range cases {
+		b, ok := km.Resolve(m.activeStack(), keyMsg(key), keys.Opts{})
+		if !ok || b.Action != want {
+			t.Errorf("%q resolved to %q (ok=%v), want %q", key, b.Action, ok, want)
+		}
+	}
+	b, ok := km.Resolve([]keys.Ctx{ctxSlots, ctxAbort}, keyMsg("h"), keys.Opts{})
+	if !ok || b.Action != "slots.hours" {
+		t.Errorf("h in the slot list resolved to %q (ok=%v), want slots.hours", b.Action, ok)
 	}
 }

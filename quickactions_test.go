@@ -7,10 +7,23 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
 )
 
 // errFake stands in for a Google API failure in save-path tests.
 var errFake = errors.New("calendar API 503")
+
+// handleQuickAction presses key in the schedule and reports whether it
+// resolved to one of the quick actions (undo, save/discard, the nudges and
+// duplicates). It replaces the old key-string dispatcher of the same name, so
+// these tests now also check that the keys are bound where they should be.
+func (m model) handleQuickAction(key string) (tea.Model, tea.Cmd, bool) {
+	bnd, ok := m.keymap().Resolve(m.activeStack(), keyMsg(key), keys.Opts{})
+	if !ok {
+		return m, nil, false
+	}
+	return m.runQuick(bnd.Action)
+}
 
 func TestPreviewLineResolvesShorthand(t *testing.T) {
 	now := time.Date(2026, 7, 15, 14, 23, 0, 0, time.Local)
@@ -377,7 +390,7 @@ func TestUndoKeyReportsNothingToUndo(t *testing.T) {
 	if cmd != nil {
 		t.Error("expected no command when there is nothing to undo")
 	}
-	if got := mm.(model).status; got != "nothing to undo" {
+	if got := mm.(model).statusText(); got != "nothing to undo" {
 		t.Errorf("status = %q, want 'nothing to undo'", got)
 	}
 }
@@ -414,8 +427,8 @@ func TestFailedSaveKeepsPendingForRetry(t *testing.T) {
 	if got.pending.saving {
 		t.Error("a failed save must clear the in-flight flag so s can retry")
 	}
-	if !strings.Contains(got.status, "retries") {
-		t.Errorf("status = %q, want it to offer a retry", got.status)
+	if !strings.Contains(got.statusText(), "retries") {
+		t.Errorf("status = %q, want it to offer a retry", got.statusText())
 	}
 	// Retry works.
 	if _, cmd, _ := got.handleQuickAction("s"); cmd == nil {
@@ -465,8 +478,8 @@ func TestQuitRefusedWhilePending(t *testing.T) {
 	if cmd != nil {
 		t.Error("q must not quit while a change is unsaved")
 	}
-	if !strings.Contains(mm.(model).status, "unsaved") {
-		t.Errorf("status = %q, want it to explain the refusal", mm.(model).status)
+	if !strings.Contains(mm.(model).statusText(), "unsaved") {
+		t.Errorf("status = %q, want it to explain the refusal", mm.(model).statusText())
 	}
 	// After discarding, q quits.
 	discarded, _, _ := mm.(model).handleQuickAction("esc")
@@ -618,7 +631,7 @@ func TestSaveWarnsThatAttendeesAreNotNotified(t *testing.T) {
 	if !handled {
 		t.Fatal("s was not handled while a change was staged")
 	}
-	got := updated.(model).status
+	got := updated.(model).statusText()
 	if !strings.Contains(got, "NOT notified") {
 		t.Errorf("status = %q, want it to say attendees are not notified", got)
 	}
