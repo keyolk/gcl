@@ -228,7 +228,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case createdMsg:
 		m.create.submitting = false
 		if msg.err != nil {
+			// The form shows the error; the "creating~" progress has nothing
+			// left to wait for.
 			m.create.err = msg.err.Error()
+			m.toasts = toast.Dismiss(m.toasts, srcAction)
 			return m, nil
 		}
 		m.mode = modeNormal

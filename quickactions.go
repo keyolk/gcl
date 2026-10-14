@@ -210,8 +210,8 @@ func (m model) runQuick(action string) (tea.Model, tea.Cmd, bool) {
 			m.say("nothing to undo")
 			return m, nil, true
 		}
-		m.say("undoing~")
-		return m, m.undoCmd(), true
+		cmd := m.running("undoing~", m.undoCmd())
+		return m, cmd, true
 	case "save":
 		if m.pending == nil {
 			m.say("nothing staged to save (use )( }{ >< to adjust the time first)")
@@ -233,7 +233,7 @@ func (m model) runQuick(action string) (tea.Model, tea.Cmd, bool) {
 			m.warn(fmt.Sprintf("saving %s~ · %d %s NOT notified (E to edit and notify)",
 				label, n, plural(n, "attendee", "attendees")))
 		} else {
-			m.say("saving " + label + "~")
+			cmd = m.running("saving "+label+"~", cmd)
 		}
 		return m, cmd, true
 	case "discard":
@@ -269,11 +269,11 @@ func (m model) runQuick(action string) (tea.Model, tea.Cmd, bool) {
 	case "nudge.prevday":
 		m.say(m.stagePending(ev, 0, 0, -1))
 	case "dup":
-		m.say("duplicating~")
-		return m, m.duplicateEventCmd(ev, 0, "duplicated \""+ev.Title+"\""), true
+		cmd := m.running("duplicating~", m.duplicateEventCmd(ev, 0, "duplicated \""+ev.Title+"\""))
+		return m, cmd, true
 	case "dup.week":
-		m.say("copying to next week~")
-		return m, m.duplicateEventCmd(ev, 7, "copied \""+ev.Title+"\" to next week"), true
+		cmd := m.running("copying to next week~", m.duplicateEventCmd(ev, 7, "copied \""+ev.Title+"\" to next week"))
+		return m, cmd, true
 	default:
 		return m, nil, false
 	}

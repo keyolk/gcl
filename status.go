@@ -1,6 +1,7 @@
 package main
 
 import (
+	tea "github.com/charmbracelet/bubbletea"
 	"strings"
 	"time"
 
@@ -42,6 +43,18 @@ func (m *model) done(src, text string) { m.push(src, toast.Success, text) }
 // fail reports an error. It stays until a key is pressed after it was shown,
 // or until the same source reports again.
 func (m *model) fail(src, text string) { m.push(src, toast.Error, text) }
+
+// running shows text as a progress toast while cmd writes to Google, and
+// returns cmd. Every write answers on srcAction (done or fail), which replaces
+// the progress toast, so "saving~" no longer lingers next to "saved" until its
+// timer runs out. No cmd, no toast: a Progress toast nothing answers would
+// stay forever.
+func (m *model) running(text string, cmd tea.Cmd) tea.Cmd {
+	if cmd != nil {
+		m.push(srcAction, toast.Progress, text)
+	}
+	return cmd
+}
 
 func (m *model) push(src string, level toast.Level, text string) {
 	m.pushTTL(src, level, text, 0)

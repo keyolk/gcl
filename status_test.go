@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/toast"
 )
 
@@ -100,5 +101,42 @@ func TestStatusUsesNoAmbiguousEllipsis(t *testing.T) {
 	m.say(strings.Repeat("long note ", 10))
 	if got := m.statusView(); strings.Contains(got, "…") {
 		t.Errorf("status cut with U+2026, which KR/JP terminals draw two cells wide: %q", got)
+	}
+}
+
+// A write in flight is a Progress toast: it has no timer, and the result from
+// the same source replaces it, so "copying~" never sits beside "copied".
+func TestInFlightNoteIsReplacedByItsResult(t *testing.T) {
+	m := loadedModel()
+	next, _ := m.Update(keyMsg("y"))
+	next, cmd := next.(model).Update(keyMsg("y")) // copy the summary; cmd is not run
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("yy scheduled no copy")
+	}
+	var progress []toast.Toast
+	for _, it := range m.toasts.Items() {
+		if it.Source == srcAction {
+			progress = append(progress, it)
+		}
+	}
+	if len(progress) != 1 || progress[0].Level != toast.Progress || !strings.Contains(progress[0].Text, "copying") {
+		t.Fatalf("action toasts during the copy = %+v, want one copying progress toast", progress)
+	}
+	next, _ = m.Update(clipboardCopiedMsg{label: "summary"})
+	if got := next.(model).statusText(); strings.Contains(got, "copying") || !strings.Contains(got, "copied summary") {
+		t.Errorf("status after the copy = %q, want only the result", got)
+	}
+}
+
+// A failed create is shown in the form; the "creating~" toast must not wait
+// forever for a result that went there instead.
+func TestFailedCreateClearsItsProgress(t *testing.T) {
+	m := loadedModel()
+	m.mode = modeCreate
+	m.running("creating~", func() tea.Msg { return nil })
+	next, _ := m.Update(createdMsg{err: errors.New("boom")})
+	if got := next.(model).statusText(); strings.Contains(got, "creating") {
+		t.Errorf("status after a failed create = %q, still creating", got)
 	}
 }

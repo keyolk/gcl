@@ -39,8 +39,8 @@ func (m model) runYank(action string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.say("copying " + label + "~")
-	return m, copyToClipboardCmd(label, value)
+	cmd := m.running("copying "+label+"~", copyToClipboardCmd(label, value))
+	return m, cmd
 }
 
 // yankValue is what a yank action copies, and the label it is reported by.

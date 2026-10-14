@@ -89,8 +89,8 @@ func (m model) runForm(action string) (tea.Model, tea.Cmd) {
 		c.finalizeAttendees()
 		c.submitting = true
 		c.err = ""
-		m.say("creating~")
-		return m, m.submitCreateCmd()
+		cmd := m.running("creating~", m.submitCreateCmd())
+		return m, cmd
 	case "submit.no", "formhelp.close":
 		// Back to the form, not to normal mode, so an in-progress edit isn't
 		// lost. The form's field text and cursor are preserved.

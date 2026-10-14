@@ -42,14 +42,14 @@ func (m model) runDelete(action string) (tea.Model, tea.Cmd) {
 	notify := len(ev.Attendees) > 0
 	// Snapshot before deleting so `u` can recreate the event.
 	restore := undoSnapshot(ev, cal, undoDelete)
-	m.say("deleting~")
-	return m, func() tea.Msg {
+	cmd := m.running("deleting~", func() tea.Msg {
 		err := deleteEvent(cal, id, notify)
 		if err != nil {
 			return deletedMsg{err: err}
 		}
 		return deletedMsg{restore: restore}
-	}
+	})
+	return m, cmd
 }
 
 // runSearch drives the search overlay: fuzzy-jump across the loaded events.
