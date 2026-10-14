@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -109,22 +110,43 @@ func (r upcomingReminder) message() string {
 	return msg
 }
 
+// errNoToastSink means neither tmux nor osascript is available, so a reminder
+// had nowhere non-intrusive to go. Callers decide the fallback: the --notify CLI
+// prints to stdout, while the TUI must NOT (a stray write from a Cmd goroutine
+// lands in the alt screen and corrupts the frame) and shows it in the status line.
+var errNoToastSink = errors.New("no notification sink (not in tmux, osascript unavailable)")
+
 // sendToast delivers a non-focus-stealing notification. Inside tmux it flashes
 // the status line (display-message); on macOS it also posts a desktop banner via
 // osascript. Neither steals focus — deliberately NOT using tmux display-popup,
-// which is modal and grabs the keyboard.
-func sendToast(msg string) {
+// which is modal and grabs the keyboard. It never writes to stdout; it returns
+// errNoToastSink when no sink exists, or the sink errors when none delivered.
+func sendToast(msg string) error {
+	delivered := false
+	var errs []error
 	if os.Getenv("TMUX") != "" {
-		// -d 0 leaves the message up until the next status refresh / keypress.
-		_ = exec.Command("tmux", "display-message", msg).Run()
+		if err := exec.Command("tmux", "display-message", msg).Run(); err != nil {
+			errs = append(errs, fmt.Errorf("tmux display-message: %w", err))
+		} else {
+			delivered = true
+		}
 	}
 	if osascriptPath != "" {
 		script := fmt.Sprintf("display notification %q with title %q", msg, "gcal")
-		_ = exec.Command(osascriptPath, "-e", script).Run()
+		if err := exec.Command(osascriptPath, "-e", script).Run(); err != nil {
+			errs = append(errs, fmt.Errorf("osascript: %w", err))
+		} else {
+			delivered = true
+		}
 	}
-	if os.Getenv("TMUX") == "" && osascriptPath == "" {
-		fmt.Println(msg)
+	if delivered {
+		// One sink reaching the user is enough; a failure of the other is noise.
+		return nil
 	}
+	if len(errs) == 0 {
+		return errNoToastSink
+	}
+	return errors.Join(errs...)
 }
 
 // loadNotifiedKeys reads the fired-reminder state file.
@@ -141,9 +163,9 @@ func loadNotifiedKeys() map[string]bool {
 }
 
 // markNotified appends freshly-fired keys to the state file (merged + sorted).
-func markNotified(keys []string) {
+func markNotified(keys []string) error {
 	if len(keys) == 0 {
-		return
+		return nil
 	}
 	seen := loadNotifiedKeys()
 	for _, k := range keys {
@@ -154,24 +176,39 @@ func markNotified(keys []string) {
 		merged = append(merged, k)
 	}
 	sort.Strings(merged)
-	_ = os.MkdirAll(cacheDir(), 0o755)
-	_ = os.WriteFile(notifyStatePath(), []byte(strings.Join(merged, "\n")+"\n"), 0o644)
+	if err := os.MkdirAll(cacheDir(), 0o755); err != nil {
+		return fmt.Errorf("save notify state: %w", err)
+	}
+	if err := os.WriteFile(notifyStatePath(), []byte(strings.Join(merged, "\n")+"\n"), 0o644); err != nil {
+		return fmt.Errorf("save notify state: %w", err)
+	}
+	return nil
 }
 
 // notifyUpcoming performs one scan-and-toast pass, honoring each event's own
 // reminder settings. fallbackWindow (minutes) applies only to events with no
-// reminder configured. Used by the --notify flag (cron/launchd friendly) and
-// reused by the in-app watcher.
-func notifyUpcoming(calendar string, fallbackWindow int) error {
+// reminder configured. deliver posts one reminder (sendToast, or a wrapper that
+// adds a fallback). Used by the --notify flag (cron/launchd friendly) and
+// reused by the in-app watcher. It returns how many reminders were delivered.
+//
+// A reminder whose delivery failed is not marked as fired, so the next pass
+// retries it instead of silently dropping it.
+func notifyUpcoming(calendar string, fallbackWindow int, deliver func(string) error) (int, error) {
 	reminders, err := scanUpcoming(calendar, fallbackWindow)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var fired []string
+	var errs []error
 	for _, r := range reminders {
-		sendToast(r.message())
+		if err := deliver(r.message()); err != nil {
+			errs = append(errs, err)
+			continue
+		}
 		fired = append(fired, r.key)
 	}
-	markNotified(fired)
-	return nil
+	if err := markNotified(fired); err != nil {
+		errs = append(errs, err)
+	}
+	return len(fired), errors.Join(errs...)
 }

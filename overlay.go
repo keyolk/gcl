@@ -341,6 +341,7 @@ func (m model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		o.active = picked
 		o.failed = map[string]string{}
+		m.dropLoadedEvents()
 		m.loading = true
 		m.status = fmt.Sprintf("overlaying %d calendars~", len(picked))
 		return m, m.reload()
@@ -362,6 +363,7 @@ func (m model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) clearOverlay() tea.Cmd {
 	m.overlay.active = nil
 	m.overlay.failed = nil
+	m.dropLoadedEvents()
 	m.loading = true
 	m.status = "overlay off · back to " + m.calendarDisplayName()
 	return m.reload()

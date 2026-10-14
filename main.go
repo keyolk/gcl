@@ -161,6 +161,14 @@ type fetchTickMsg struct{ reqID int }
 // notifyTickMsg fires the in-app reminder watcher on an interval.
 type notifyTickMsg struct{}
 
+// notifyResultMsg reports one in-app reminder scan. shown carries reminders that
+// had no toast sink and must be surfaced in the status line instead.
+type notifyResultMsg struct {
+	fired int
+	shown []string
+	err   error
+}
+
 // clockTickMsg is a pure repaint trigger for time-relative UI (active count,
 // "now" divider, countdowns). It carries no data and changes no state.
 type clockTickMsg struct{}
@@ -434,6 +442,8 @@ var (
 	calPillStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("232")).Background(lipgloss.Color("212")).Padding(0, 1)
 	metaStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("189")).Background(lipgloss.Color("62")).Padding(0, 1)
 	tzPillStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("232")).Background(lipgloss.Color("150")).Padding(0, 1)
+	// loadingPillStyle flags a background reload while the old agenda stays up.
+	loadingPillStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Padding(0, 1)
 	// activePillStyle marks the header's "in effect right now" counter. Red
 	// background because it is a state, not a navigation aid.
 	activePillStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("124")).Padding(0, 1)
@@ -523,7 +533,17 @@ func main() {
 	}
 
 	if *notifyFlag {
-		if err := notifyUpcoming(resolveCalendar(calendar), *notifyWindowFlag); err != nil {
+		// Outside the TUI stdout is a fine last resort (cron mails it, a shell
+		// shows it), so the CLI keeps the print fallback the TUI must not use.
+		deliver := func(msg string) error {
+			err := sendToast(msg)
+			if errors.Is(err, errNoToastSink) {
+				fmt.Println(msg)
+				return nil
+			}
+			return err
+		}
+		if _, err := notifyUpcoming(resolveCalendar(calendar), *notifyWindowFlag, deliver); err != nil {
 			fatalf("notify: %v", err)
 		}
 		return
@@ -581,8 +601,20 @@ func notifyTickCmd() tea.Cmd {
 func (m model) notifyScanCmd() tea.Cmd {
 	calendar := m.calendar
 	return func() tea.Msg {
-		_ = notifyUpcoming(calendar, settings.notifyWindow)
-		return nil
+		// This runs on a Cmd goroutine while the alt screen is up: nothing here
+		// may print. Reminders without a toast sink are handed back to Update
+		// and shown in the status line instead.
+		var shown []string
+		deliver := func(msg string) error {
+			err := sendToast(msg)
+			if errors.Is(err, errNoToastSink) {
+				shown = append(shown, msg)
+				return nil
+			}
+			return err
+		}
+		fired, err := notifyUpcoming(calendar, settings.notifyWindow, deliver)
+		return notifyResultMsg{fired: fired, shown: shown, err: err}
 	}
 }
 
@@ -600,6 +632,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case notifyTickMsg:
 		// Fire a background scan and re-arm the watcher.
 		return m, tea.Batch(m.notifyScanCmd(), notifyTickCmd())
+	case notifyResultMsg:
+		switch {
+		case msg.err != nil:
+			m.status = "reminder failed: " + msg.err.Error()
+		case len(msg.shown) > 0:
+			m.status = strings.Join(msg.shown, " · ")
+		case msg.fired > 0:
+			m.status = fmt.Sprintf("%d reminder(s) sent", msg.fired)
+		}
+		return m, nil
 	case clockTickMsg:
 		// Nothing to update: View() reads time.Now() directly. Just re-arm so
 		// the next repaint happens.
@@ -612,9 +654,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.err = msg.err
 		if msg.err != nil {
-			m.events = nil
-			m.selected = 0
-			m.status = "load failed"
+			// Keep the last good events (and their loaded window) on screen: a
+			// transient failure after a nudge or save used to blank the whole
+			// agenda. loadedStart/End stay with those events, so anchorLoaded()
+			// still reports the gap and the next move retries the fetch.
+			m.status = "load failed: " + msg.err.Error()
+			if m.hasLoaded() {
+				m.status += " · showing last loaded"
+			}
 		} else {
 			m.events = msg.events
 			m.loadedStart = msg.start
@@ -966,24 +1013,6 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	// Confirm-submit overlay: y/Enter actually creates/updates; n/ESC
-	// returns to the form (not to normal mode, so an in-progress edit isn't lost).
-	if m.mode == modeConfirmSubmit {
-		switch key {
-		case "y", "Y", "enter":
-			c := &m.create
-			c.finalizeAttendees()
-			c.submitting = true
-			c.err = ""
-			m.status = "creating~"
-			return m, m.submitCreateCmd()
-		case "n", "N", "esc":
-			m.mode = modeCreate
-			return m, nil
-		}
-		return m, nil
-	}
-
 	// A pending yank prefix owns the next key before quick actions get a chance
 	// to interpret it (notably, `ys` copies start instead of saving a staged move).
 	if m.yankPending {
@@ -1246,6 +1275,31 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeHelp
 	}
 	return m, nil
+}
+
+// hasLoaded reports whether a fetch has ever landed for the current source, i.e.
+// whether there is a real agenda to keep on screen while reloading.
+func (m model) hasLoaded() bool {
+	return !m.loadedStart.IsZero()
+}
+
+// dropLoadedEvents forgets the loaded agenda. Call it when the event SOURCE
+// changes (another calendar, overlay on/off): the old events belong to a
+// different calendar, so keeping them through the reload — or through a failed
+// reload — would show them under the new calendar's name.
+func (m *model) dropLoadedEvents() {
+	m.events = nil
+	m.selected = 0
+	m.loadedStart = time.Time{}
+	m.loadedEnd = time.Time{}
+}
+
+// joinNote appends note to an existing status note with the usual separator.
+func joinNote(existing, note string) string {
+	if existing == "" {
+		return note
+	}
+	return existing + " · " + note
 }
 
 // reload marks loading and returns the fetch command.
@@ -1937,6 +1991,7 @@ func (m model) choosePicker(it pickerItem) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.calendarKey = it.value
 		m.calendar = it.value
+		m.dropLoadedEvents()
 		m.loading = true
 		m.status = "loading~"
 		// Switching calendars while an overlay is on would otherwise change
@@ -1950,7 +2005,11 @@ func (m model) choosePicker(it pickerItem) (tea.Model, tea.Cmd) {
 			// to survive until the load lands (see eventsMsg).
 			m.pendingNote = "overlay off · " + displayNameForCalendar(it.value)
 		}
-		rememberCalendar(it.value)
+		if err := rememberCalendar(it.value); err != nil {
+			// The switch itself still works; only the recents list is stale.
+			// Ride pendingNote so the load's own status doesn't erase it.
+			m.pendingNote = joinNote(m.pendingNote, err.Error())
+		}
 		return m, m.reload()
 	}
 	m.mode = modeNormal
@@ -2025,7 +2084,13 @@ func (m model) View() string {
 		metaText = fmt.Sprintf("%s | %s | step:%s", viewName, m.anchor.Format("2006-01-02"), m.jumpUnit)
 	}
 	meta := metaStyle.Render(" " + metaText + " ")
-	headerContent := calPill + meta + tzPill
+	headerContent := calPill
+	// The reload indicator sits right after the calendar pill so the
+	// tail-truncation of a narrow header never cuts it off.
+	if m.loading && m.hasLoaded() {
+		headerContent += loadingPillStyle.Render("loading~")
+	}
+	headerContent += meta + tzPill
 	// An in-effect event is the thing you most need to know without asking, so
 	// the count lives in the header and doubles as the advert for `a`.
 	if label := m.activeCountLabel(time.Now()); label != "" {
@@ -2057,9 +2122,13 @@ func (m model) View() string {
 		scheduleHeight = max(3, scheduleHeight-1)
 	}
 	var body string
-	if m.loading {
+	// Only an agenda that has never loaded is replaced by a placeholder. Once
+	// events are on screen, a reload (nudge, save, move) keeps them and the
+	// header shows a loading pill instead, so the body never flashes empty; a
+	// failed reload likewise keeps them and reports in the status line.
+	if m.loading && !m.hasLoaded() {
 		body = cardStyle.Width(max(20, bodyWidth-4)).Render("loading calendar events~")
-	} else if m.err != nil {
+	} else if m.err != nil && !m.hasLoaded() {
 		body = errorStyle.Render(wrap(m.err.Error(), bodyWidth))
 	} else {
 		// The schedule (list agenda or grid) plus a detail pane. The detail pane
