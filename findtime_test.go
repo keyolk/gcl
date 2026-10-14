@@ -232,7 +232,7 @@ func TestFindPeopleSpaceTogglesAndEnterNeedsSomeone(t *testing.T) {
 		selected: map[string]bool{},
 	}
 	// Enter with nobody picked must refuse rather than query for zero people.
-	updated, cmd := m.handleFindKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(model)
 	if cmd != nil {
 		t.Error("Enter with no participants should not start a search")
@@ -242,12 +242,12 @@ func TestFindPeopleSpaceTogglesAndEnterNeedsSomeone(t *testing.T) {
 	}
 
 	got.find.err = ""
-	updated, _ = got.handleFindKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, _ = got.handleKey(tea.KeyMsg{Type: tea.KeySpace})
 	got = updated.(model)
 	if !got.find.selected["a@x.com"] {
 		t.Fatal("space should toggle the highlighted candidate on")
 	}
-	updated, _ = got.handleFindKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, _ = got.handleKey(tea.KeyMsg{Type: tea.KeySpace})
 	if updated.(model).find.selected["a@x.com"] {
 		t.Error("space should toggle the same candidate back off")
 	}
@@ -257,7 +257,7 @@ func TestFindPeopleAddsTypedEmailWithNoMatch(t *testing.T) {
 	// Someone who never appears on a loaded event still has to be invitable.
 	m := model{width: 100, height: 40, mode: modeFindTime}
 	m.find = findState{step: findPeople, input: "new@x.com", selected: map[string]bool{}}
-	updated, _ := m.handleFindKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
 	got := updated.(model)
 	if !got.find.selected["new@x.com"] {
 		t.Fatalf("typed address was not added: %v", got.find.selected)
@@ -279,7 +279,7 @@ func TestFindSlotEnterPrefillsCreateForm(t *testing.T) {
 		selected: map[string]bool{"a@x.com": true, "b@x.com": true},
 		slots:    []candidateSlot{slot},
 	}
-	updated, _ := m.handleFindKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(model)
 	if got.mode != modeCreate {
 		t.Fatalf("mode = %v, want modeCreate", got.mode)
@@ -309,7 +309,7 @@ func TestFindSlotEscGoesBackToPeople(t *testing.T) {
 	// is the usual fix for a disappointing slot list.
 	m := model{width: 100, height: 40, mode: modeFindTime}
 	m.find = findState{step: findSlotList, selected: map[string]bool{"a@x.com": true}}
-	updated, _ := m.handleFindKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	got := updated.(model)
 	if got.mode != modeFindTime {
 		t.Errorf("esc from the slot list should stay in the flow, got mode %v", got.mode)
@@ -326,14 +326,14 @@ func TestFindSlotHourToggleWidensTheDay(t *testing.T) {
 		selected: map[string]bool{"a@x.com": true},
 		search:   slotSearch{dayStartHour: 7, dayEndHour: 24, duration: time.Hour, step: 30 * time.Minute},
 	}
-	updated, _ := m.handleFindKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("H")})
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("H")})
 	got := updated.(model)
 	if got.find.search.dayStartHour != 0 || got.find.search.dayEndHour != 24 {
 		t.Errorf("H should open the day fully, got %d-%d",
 			got.find.search.dayStartHour, got.find.search.dayEndHour)
 	}
 	// And back again to the configured hours.
-	updated, _ = got.handleFindKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("H")})
+	updated, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("H")})
 	if h := updated.(model).find.search.dayStartHour; h != settings.slotDayStart {
 		t.Errorf("second H should restore the configured start hour, got %d", h)
 	}

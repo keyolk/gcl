@@ -7,10 +7,23 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
 )
 
 // errFake stands in for a Google API failure in save-path tests.
 var errFake = errors.New("calendar API 503")
+
+// handleQuickAction presses key in the schedule and reports whether it
+// resolved to one of the quick actions (undo, save/discard, the nudges and
+// duplicates). It replaces the old key-string dispatcher of the same name, so
+// these tests now also check that the keys are bound where they should be.
+func (m model) handleQuickAction(key string) (tea.Model, tea.Cmd, bool) {
+	bnd, ok := m.keymap().Resolve(m.activeStack(), keyMsg(key), keys.Opts{})
+	if !ok {
+		return m, nil, false
+	}
+	return m.runQuick(bnd.Action)
+}
 
 func TestPreviewLineResolvesShorthand(t *testing.T) {
 	now := time.Date(2026, 7, 15, 14, 23, 0, 0, time.Local)

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/toast"
 )
 
@@ -45,7 +46,7 @@ func TestYankValueCopiesEventFields(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
-			label, got, ok := m.yankValue(tt.key)
+			label, got, ok := m.yankValue(yankAction(t, tt.key))
 			if !ok {
 				t.Fatalf("yankValue(%q) was not handled", tt.key)
 			}
@@ -62,7 +63,7 @@ func TestYankSummaryIncludesShareableEventDetails(t *testing.T) {
 	t.Cleanup(func() { settings = oldSettings })
 
 	m := yankTestModel()
-	label, got, ok := m.yankValue("y")
+	label, got, ok := m.yankValue(yankAction(t, "y"))
 	if !ok || label != "event summary" {
 		t.Fatalf("yy = (%q, handled=%v), want event summary", label, ok)
 	}
@@ -190,4 +191,15 @@ func TestClipboardResultUpdatesStatus(t *testing.T) {
 	if items := updated.(model).toasts.Items(); len(items) != 1 || items[0].Level != toast.Success {
 		t.Errorf("toasts = %+v, want one success", items)
 	}
+}
+
+// yankAction is the action the key after y resolves to, so these tests keep
+// checking the key as well as what it copies.
+func yankAction(t *testing.T, key string) string {
+	t.Helper()
+	bnd, ok := baseKeymap.Resolve([]keys.Ctx{ctxYank}, keyMsg(key), keys.Opts{})
+	if !ok {
+		t.Fatalf("y%s is not bound", key)
+	}
+	return bnd.Action
 }

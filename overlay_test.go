@@ -243,12 +243,12 @@ func TestOverlayPickerTogglesAndApplies(t *testing.T) {
 
 	got.overlay.cands = []pickerItem{{label: "jace@x.com", value: "jace@x.com"}}
 	got.overlay.input = ""
-	updated, _ = got.handleOverlayKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, _ = got.handleKey(tea.KeyMsg{Type: tea.KeySpace})
 	got = updated.(model)
 	if !got.overlay.selected["jace@x.com"] {
 		t.Fatal("space did not toggle the highlighted calendar on")
 	}
-	updated, cmd := got.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := got.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(model)
 	if !got.overlay.on() {
 		t.Fatal("Enter did not apply the overlay")
@@ -267,7 +267,7 @@ func TestOverlayPickerEmptySetTurnsItOff(t *testing.T) {
 	m := overlaidModel(170, 24)
 	m.mode = modeOverlayPicker
 	m.overlay.selected = map[string]bool{}
-	updated, cmd := m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(model)
 	if got.overlay.on() {
 		t.Errorf("an empty selection left the overlay on: %v", got.overlay.active)
@@ -285,7 +285,7 @@ func TestOverlayPickerRefusesMoreCalendarsThanColors(t *testing.T) {
 	for i := 0; i <= len(overlayColors); i++ {
 		m.overlay.selected[string(rune('a'+i))+"@x.com"] = true
 	}
-	updated, cmd := m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(model)
 	if got.overlay.on() {
 		t.Error("an over-large overlay was applied")

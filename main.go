@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
 )
 
 func main() {
@@ -103,7 +104,12 @@ func main() {
 		return
 	}
 
+	// User key overrides (~/.config/gcl/keys.yaml). A bad file is reported
+	// and ignored rather than fatal: the defaults still work.
+	km, keysErr := baseKeymap.LoadOverrides(keys.ConfigPath(appName), allStacks...)
+
 	m := model{
+		km:             km,
 		calendarKey:    calendar,
 		calendar:       resolveCalendar(calendar),
 		view:           viewList,
@@ -113,6 +119,11 @@ func main() {
 		loading:        true,
 		nextReqID:      1,
 		inflightReq:    1,
+	}
+	if keysErr != nil {
+		// Shown in the TUI, not on stderr: the alt screen would hide a
+		// printed warning until exit.
+		m.fail(srcStatus, "keys.yaml ignored: "+keysErr.Error())
 	}
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
 		fatalf("%v", err)

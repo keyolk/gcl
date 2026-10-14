@@ -57,8 +57,6 @@ func (m model) viewDayDetail(width, height int) string {
 			lines = append(lines, mutedStyle.Render("     room: "+truncate(strings.Join(ev.Rooms, ", "), iw-11)))
 		}
 	}
-	lines = append(lines, "")
-	lines = append(lines, mutedStyle.Render("tab detail focus | j/k event | a active now | e calendar | A/L/E/X act"))
 	content := truncateLines(strings.Join(lines, "\n"), inner, iw)
 	return detailStyle.Width(max(28, width)).Height(inner).Render(content)
 }

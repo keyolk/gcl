@@ -199,54 +199,54 @@ func (m model) duplicateEventCmd(ev *Event, days int, label string) tea.Cmd {
 	}
 }
 
-// handleQuickAction dispatches the quick-action keys. It returns handled=false
-// when the key is not a quick action, so the caller can continue its own
-// dispatch.
-func (m model) handleQuickAction(key string) (tea.Model, tea.Cmd, bool) {
-	// `u` works even with no event selected.
-	if key == "u" {
+// runQuick runs the quick actions (undo, save/discard of a staged change, the
+// nudges and duplicates). ok is false for any other action, so the caller
+// continues its own dispatch.
+func (m model) runQuick(action string) (tea.Model, tea.Cmd, bool) {
+	switch action {
+	case "undo":
+		// `u` works even with no event selected.
 		if m.lastUndo == nil {
 			m.say("nothing to undo")
 			return m, nil, true
 		}
 		m.say("undoing~")
 		return m, m.undoCmd(), true
-	}
-
-	// `s` / `esc` only belong to quick actions while a change is staged;
-	// otherwise esc must stay available for whatever else uses it.
-	if m.pending != nil {
-		switch key {
-		case "s":
-			if m.pending.saving {
-				m.say("already saving~")
-				return m, nil, true
-			}
-			label := m.pending.label()
-			// Keep the staged change until the patch is confirmed, so a failed
-			// save is retryable rather than silently lost.
-			n := len(m.pending.attendees)
-			cmd := m.commitPendingCmd()
-			if n > 0 {
-				// Quick saves pass Notify:false. Moving a meeting without
-				// telling the people in it is a real hazard, so say it plainly
-				// instead of leaving it to the source comment.
-				m.warn(fmt.Sprintf("saving %s~ · %d %s NOT notified (E to edit and notify)",
-					label, n, plural(n, "attendee", "attendees")))
-			} else {
-				m.say("saving " + label + "~")
-			}
-			return m, cmd, true
-		case "esc":
-			if m.pending.saving {
-				m.warn("save in flight — can't discard now")
-				return m, nil, true
-			}
-			m.say(m.discardPending())
+	case "save":
+		if m.pending == nil {
+			m.say("nothing staged to save (use )( }{ >< to adjust the time first)")
 			return m, nil, true
 		}
-	} else if key == "s" {
-		m.say("nothing staged to save (use )( }{ >< to adjust the time first)")
+		if m.pending.saving {
+			m.say("already saving~")
+			return m, nil, true
+		}
+		label := m.pending.label()
+		// Keep the staged change until the patch is confirmed, so a failed
+		// save is retryable rather than silently lost.
+		n := len(m.pending.attendees)
+		cmd := m.commitPendingCmd()
+		if n > 0 {
+			// Quick saves pass Notify:false. Moving a meeting without telling
+			// the people in it is a real hazard, so say it plainly instead of
+			// leaving it to the source comment.
+			m.warn(fmt.Sprintf("saving %s~ · %d %s NOT notified (E to edit and notify)",
+				label, n, plural(n, "attendee", "attendees")))
+		} else {
+			m.say("saving " + label + "~")
+		}
+		return m, cmd, true
+	case "discard":
+		// Only bound while a change is staged (ctxPending), so esc stays free
+		// for whatever else uses it otherwise.
+		if m.pending == nil {
+			return m, nil, false
+		}
+		if m.pending.saving {
+			m.warn("save in flight — can't discard now")
+			return m, nil, true
+		}
+		m.say(m.discardPending())
 		return m, nil, true
 	}
 
@@ -254,33 +254,28 @@ func (m model) handleQuickAction(key string) (tea.Model, tea.Cmd, bool) {
 	if ev == nil || ev.ID == "" {
 		return m, nil, false
 	}
-
-	// Nudges/resizes/day-moves stage a change; they no longer patch Google.
-	switch key {
-	case ")":
+	// Nudges/resizes/day-moves stage a change; they do not patch Google.
+	switch action {
+	case "nudge.later":
 		m.say(m.stagePending(ev, nudgeStep, nudgeStep, 0))
-		return m, nil, true
-	case "(":
+	case "nudge.earlier":
 		m.say(m.stagePending(ev, -nudgeStep, -nudgeStep, 0))
-		return m, nil, true
-	case "}":
+	case "nudge.longer":
 		m.say(m.stagePending(ev, 0, nudgeStep, 0))
-		return m, nil, true
-	case "{":
+	case "nudge.shorter":
 		m.say(m.stagePending(ev, 0, -nudgeStep, 0))
-		return m, nil, true
-	case ">":
+	case "nudge.nextday":
 		m.say(m.stagePending(ev, 0, 0, 1))
-		return m, nil, true
-	case "<":
+	case "nudge.prevday":
 		m.say(m.stagePending(ev, 0, 0, -1))
-		return m, nil, true
-	case "D":
+	case "dup":
 		m.say("duplicating~")
 		return m, m.duplicateEventCmd(ev, 0, "duplicated \""+ev.Title+"\""), true
-	case "W":
+	case "dup.week":
 		m.say("copying to next week~")
 		return m, m.duplicateEventCmd(ev, 7, "copied \""+ev.Title+"\" to next week"), true
+	default:
+		return m, nil, false
 	}
-	return m, nil, false
+	return m, nil, true
 }

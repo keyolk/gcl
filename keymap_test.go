@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/keys"
 )
 
 // isQuit reports whether a returned command is tea.Quit, by running it and
@@ -23,9 +24,9 @@ func TestNormalizeCJKKeyMapsJamoByPhysicalPosition(t *testing.T) {
 		"ㅃ": "Q", "ㄲ": "R",
 	}
 	for jamo, want := range cases {
-		got := normalizeCJKKey(keyMsg(jamo)).String()
+		got := keys.NormalizeCJK(keyMsg(jamo)).String()
 		if got != want {
-			t.Errorf("normalizeCJKKey(%q) = %q, want %q", jamo, got, want)
+			t.Errorf("keys.NormalizeCJK(%q) = %q, want %q", jamo, got, want)
 		}
 	}
 }
@@ -34,25 +35,25 @@ func TestNormalizeCJKKeyLeavesEverythingElseAlone(t *testing.T) {
 	// Latin keys, digits, and composed syllables pass through: a composed
 	// syllable only reaches the TUI as committed text, never as a shortcut.
 	for _, k := range []string{"q", "R", "0", "가"} {
-		if got := normalizeCJKKey(keyMsg(k)).String(); got != k {
-			t.Errorf("normalizeCJKKey(%q) = %q, want it unchanged", k, got)
+		if got := keys.NormalizeCJK(keyMsg(k)).String(); got != k {
+			t.Errorf("keys.NormalizeCJK(%q) = %q, want it unchanged", k, got)
 		}
 	}
 	// Non-rune keys carry no jamo to map.
 	for _, in := range []tea.KeyMsg{{Type: tea.KeyEnter}, {Type: tea.KeyCtrlC}, {Type: tea.KeyEscape}} {
-		if got := normalizeCJKKey(in); got.String() != in.String() {
-			t.Errorf("normalizeCJKKey(%q) = %q, want it unchanged", in.String(), got.String())
+		if got := keys.NormalizeCJK(in); got.String() != in.String() {
+			t.Errorf("keys.NormalizeCJK(%q) = %q, want it unchanged", in.String(), got.String())
 		}
 	}
 }
 
 func TestNormalizeCJKKeyLeavesPasteAndAltAlone(t *testing.T) {
 	paste := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'ㅂ'}, Paste: true}
-	if got := normalizeCJKKey(paste); got.String() != paste.String() {
+	if got := keys.NormalizeCJK(paste); got.String() != paste.String() {
 		t.Errorf("pasted jamo was rewritten to %q", got.String())
 	}
 	alt := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'ㅂ'}, Alt: true}
-	if got := normalizeCJKKey(alt); got.String() != alt.String() {
+	if got := keys.NormalizeCJK(alt); got.String() != alt.String() {
 		t.Errorf("alt chord was rewritten to %q", got.String())
 	}
 }

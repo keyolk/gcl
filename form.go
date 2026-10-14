@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -54,18 +53,13 @@ func (m model) editCreateState(ev *Event) createState {
 	}
 }
 
-func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
+// runForm drives the create/edit form, its help page and its confirm step.
+// Which keys are live depends on the form state (activeStack): moving between
+// fields (ctxForm), typing in a text field (ctxField, plus ctxSuggest on the
+// location), or the attendee field (ctxInvite). Printable keys typed into a
+// field are handled by unbound.
+func (m model) runForm(action string) (tea.Model, tea.Cmd) {
 	c := &m.create
-
-	// `?` inside the form opens the form-specific help overlay (not the global
-	// one), so the user can discover field navigation, flexible input, and
-	// quick actions while composing.
-	if key == "?" {
-		m.mode = modeFormHelp
-		return m, nil
-	}
-
 	nextField := func(delta int) {
 		step := int(c.step) + delta
 		if step < int(stepTitle) {
@@ -77,146 +71,104 @@ func (m model) handleCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		c.step = createStep(step)
 		c.err = ""
 	}
-
-	// First ESC exits text-entry mode into field-navigation mode; second ESC closes.
-	if key == "esc" {
-		if c.editingField {
-			c.editingField = false
-			c.err = ""
-			return m, nil
+	submit := func() {
+		if err := c.validateAll(); err != "" {
+			c.err = err
+			return
 		}
-		m.mode = modeNormal
-		return m, nil
+		// Route through a confirmation prompt so a mistyped submit isn't
+		// created outright — mirroring the delete confirmation. y/Enter there
+		// actually submits; n/ESC returns to the form.
+		m.mode = modeConfirmSubmit
 	}
 
-	switch c.step {
-	case stepTitle, stepDate, stepStart, stepDuration, stepLocation, stepRepeat, stepDescription:
+	switch action {
+	case "submit.yes":
+		// Finalize the attendee set now (was deferred from the form Enter) so
+		// the confirmation summary shows the real count.
+		c.finalizeAttendees()
+		c.submitting = true
+		c.err = ""
+		m.say("creating~")
+		return m, m.submitCreateCmd()
+	case "submit.no", "formhelp.close":
+		// Back to the form, not to normal mode, so an in-progress edit isn't
+		// lost. The form's field text and cursor are preserved.
+		m.mode = modeCreate
+	case "help.down":
+		m.helpOff++
+		_, m.helpOff = m.helpPage()
+	case "help.up":
+		m.helpOff = max(0, m.helpOff-1)
+	case "form.help":
+		// The form's own help (field navigation, flexible input, quick
+		// actions), not the global one.
+		m.mode = modeFormHelp
+		m.helpOff = 0
+	case "form.close":
+		m.mode = modeNormal
+	case "field.blur":
+		// First ESC leaves the field; the second (form.close) closes the form.
+		c.editingField = false
+		c.err = ""
+	case "form.next":
+		nextField(1)
+	case "form.prev":
+		nextField(-1)
+	case "form.edit":
+		c.editingField = true
+	case "form.space":
+		if c.step != stepAttendees {
+			c.editingField = true
+			*c.fieldPtr() += " "
+		}
+	// While typing in a text field, j/k must TYPE — only tab/shift+tab and
+	// the arrows (inert in a single-line field) move between fields.
+	case "field.next", "invite.next":
+		c.editingField = false
+		nextField(1)
+	case "field.prev", "invite.prev":
+		c.editingField = false
+		nextField(-1)
+	case "field.submit":
+		submit()
+	case "field.erase":
+		if c.step == stepAttendees {
+			if c.attInput != "" {
+				c.attInput = trimLastRune(c.attInput)
+				c.attCandidx = 0
+			}
+			break
+		}
 		field := c.fieldPtr()
-		if !c.editingField {
-			switch key {
-			case "j", "down", "tab":
-				nextField(1)
-			case "k", "up", "shift+tab":
-				nextField(-1)
-			case "enter", "i":
-				c.editingField = true
-			case " ", "space":
-				c.editingField = true
-				*field += " "
-			}
-			return m, nil
-		}
-		// Location field: ctrl+n/ctrl+p cycle suggestions, ctrl+y accepts the
-		// highlighted one. Handled before the generic text keys so they don't
-		// get typed into the field.
-		if c.step == stepLocation {
-			cands := filterPickerItems(c.locCands, c.location)
-			switch key {
-			case "ctrl+n":
-				if len(cands) > 0 {
-					c.locCandidx = (c.locCandidx + 1) % len(cands)
-				}
-				return m, nil
-			case "ctrl+p":
-				if len(cands) > 0 {
-					c.locCandidx = (c.locCandidx - 1 + len(cands)) % len(cands)
-				}
-				return m, nil
-			case "ctrl+y":
-				if len(cands) > 0 {
-					c.location = cands[max(0, min(c.locCandidx, len(cands)-1))].value
-					c.locCandidx = 0
-				}
-				return m, nil
+		if *field != "" {
+			*field = trimLastRune(*field)
+			if c.step == stepLocation {
+				c.locCandidx = 0
 			}
 		}
-
-		switch key {
-		// While editing a text field, j/k must TYPE - only Tab/S-Tab (and arrows,
-		// which are inert in a single-line field) move between fields.
-		case "tab", "down":
-			c.editingField = false
-			nextField(1)
-		case "shift+tab", "up":
-			c.editingField = false
-			nextField(-1)
-		case "enter":
-			if err := c.validateAll(); err != "" {
-				c.err = err
-			} else {
-				// Route through a confirmation prompt so a mistyped
-				// submit isn't created outright — mirroring the delete
-				// confirmation (modeConfirmDelete). y/Enter here
-				// actually submits; n/ESC returns to the form.
-				m.mode = modeConfirmSubmit
-			}
-		case "backspace", "ctrl+h":
-			if len(*field) > 0 {
-				_, size := utf8.DecodeLastRuneInString(*field)
-				*field = (*field)[:len(*field)-size]
-				if c.step == stepLocation {
-					c.locCandidx = 0
-				}
-			}
+	case "suggest.next", "suggest.prev", "suggest.accept":
+		cands := filterPickerItems(c.locCands, c.location)
+		if len(cands) == 0 {
+			break
+		}
+		switch action {
+		case "suggest.next":
+			c.locCandidx = (c.locCandidx + 1) % len(cands)
+		case "suggest.prev":
+			c.locCandidx = (c.locCandidx - 1 + len(cands)) % len(cands)
 		default:
-			if key == " " || key == "space" {
-				*field += " "
-			} else if isTypedRune(msg) {
-				*field += msg.String()
-				if c.step == stepLocation {
-					c.locCandidx = 0
-				}
-			}
+			c.location = cands[max(0, min(c.locCandidx, len(cands)-1))].value
+			c.locCandidx = 0
 		}
-		return m, nil
-
-	case stepAttendees:
+	case "invite.toggle":
 		cands := filterPickerItems(c.attCands, c.attInput)
-		if !c.editingField {
-			switch key {
-			case "j", "down", "tab":
-				nextField(1)
-			case "k", "up", "shift+tab":
-				nextField(-1)
-			case "enter", "i":
-				c.editingField = true
-			}
-			return m, nil
+		if len(cands) > 0 {
+			c.toggle(cands[max(0, min(c.attCandidx, len(cands)-1))].value)
+		} else if strings.Contains(strings.TrimSpace(c.attInput), "@") {
+			c.toggle(strings.TrimSpace(c.attInput))
+			c.attInput = ""
 		}
-		switch key {
-		case "tab", "down", "ctrl+n", "ctrl+j":
-			c.editingField = false
-			nextField(1)
-		case "shift+tab", "up", "ctrl+p", "ctrl+k":
-			c.editingField = false
-			nextField(-1)
-		case " ", "space":
-			if len(cands) > 0 {
-				it := cands[max(0, min(c.attCandidx, len(cands)-1))]
-				c.toggle(it.value)
-			} else if strings.Contains(strings.TrimSpace(c.attInput), "@") {
-				c.toggle(strings.TrimSpace(c.attInput))
-				c.attInput = ""
-			}
-		case "enter":
-			if err := c.validateAll(); err != "" {
-				c.err = err
-			} else {
-				m.mode = modeConfirmSubmit
-			}
-		case "backspace", "ctrl+h":
-			if len(c.attInput) > 0 {
-				_, size := utf8.DecodeLastRuneInString(c.attInput)
-				c.attInput = c.attInput[:len(c.attInput)-size]
-				c.attCandidx = 0
-			}
-		default:
-			if isTypedRune(msg) {
-				c.attInput += msg.String()
-				c.attCandidx = 0
-			}
-		}
-		return m, nil
 	}
 	return m, nil
 }

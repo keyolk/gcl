@@ -34,7 +34,7 @@ func TestViewActivePanelShowsSpansAndCountdowns(t *testing.T) {
 	// Focused, it shows its own navigation keys instead.
 	m.focusPane = focusActive
 	focused := stripANSI(m.viewActivePanel(118, m.activePanelHeight(37)))
-	if !strings.Contains(focused, "j/k move") {
+	if !strings.Contains(focused, "jk move") {
 		t.Errorf("focused panel does not show its nav keys:\n%s", focused)
 	}
 }

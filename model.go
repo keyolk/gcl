@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/toast"
 )
 
@@ -192,6 +193,8 @@ type model struct {
 	selected    int
 	loading     bool
 	toasts      toast.Queue // the status line; see status.go
+	km          keys.Keymap // the key table with user overrides; zero means baseKeymap
+	helpOff     int         // first line shown on the help page (clamped by RenderHelp)
 	err         error
 	width       int
 	height      int

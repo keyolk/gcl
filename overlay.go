@@ -299,32 +299,29 @@ func (o overlayState) picked() []string {
 	return out
 }
 
-// handleOverlayKey owns every key while the overlay picker is open.
-func (m model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
+// runOverlay drives the overlay calendar picker; printable keys filter.
+func (m model) runOverlay(action string) (tea.Model, tea.Cmd) {
 	o := &m.overlay
-
 	cands := filterPickerItems(o.cands, o.input)
-	switch key {
-	case "esc":
+	switch action {
+	case "overlay.cancel":
 		m.mode = modeNormal
-		return m, nil
-	case "down", "ctrl+n", "ctrl+j":
+	case "overlay.down":
 		if len(cands) > 0 {
 			o.candIdx = (o.candIdx + 1) % len(cands)
 		}
-	case "up", "ctrl+p", "ctrl+k":
+	case "overlay.up":
 		if len(cands) > 0 {
 			o.candIdx = (o.candIdx - 1 + len(cands)) % len(cands)
 		}
-	case " ", "space":
+	case "overlay.toggle":
 		if len(cands) > 0 {
 			o.toggle(cands[max(0, min(o.candIdx, len(cands)-1))].value)
 		} else if strings.Contains(strings.TrimSpace(o.input), "@") {
 			o.toggle(strings.TrimSpace(o.input))
 			o.input = ""
 		}
-	case "enter":
+	case "overlay.apply":
 		picked := o.picked()
 		m.mode = modeNormal
 		if len(picked) == 0 {
@@ -345,14 +342,9 @@ func (m model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		m.say(fmt.Sprintf("overlaying %d calendars~", len(picked)))
 		return m, m.reload()
-	case "backspace", "ctrl+h":
+	case "overlay.erase":
 		if o.input != "" {
 			o.input = trimLastRune(o.input)
-			o.candIdx = 0
-		}
-	default:
-		if isTypedRune(msg) {
-			o.input += msg.String()
 			o.candIdx = 0
 		}
 	}
@@ -421,7 +413,7 @@ func (m model) viewOverlayPicker() string {
 			}
 		}
 	}
-	lines = append(lines, mutedStyle.Render("space toggle · Enter apply (none = off) · ESC cancel"))
+	lines = append(lines, m.keyHint(inner, ctxOverlay))
 	return modalStyle.Width(w).Height(min(len(lines)+2, max(8, m.height-4))).
 		Render(strings.Join(lines, "\n"))
 }

@@ -97,7 +97,7 @@ func (m model) viewCreate() string {
 			}
 		}
 		if len(cands) > 0 {
-			lines = append(lines, mutedStyle.Render("  ctrl+n/ctrl+p pick · ctrl+y accept"))
+			lines = append(lines, "  "+m.keyHint(max(0, inner-2), ctxSuggest))
 		}
 	}
 
@@ -168,11 +168,7 @@ func (m model) viewCreate() string {
 	if c.submitting {
 		lines = append(lines, statusStyle.Render("creating~"))
 	} else {
-		if c.editingField {
-			lines = append(lines, mutedStyle.Render("ESC blur field | Enter save | Tab/S-Tab next field | Space toggle attendee"))
-		} else {
-			lines = append(lines, mutedStyle.Render("j/k move field | Enter/i edit field | Enter on any field saves | ESC close"))
-		}
+		lines = append(lines, m.keyHint(inner, m.activeStack()...))
 	}
 	if c.err != "" {
 		lines = append(lines, errorStyle.Render("x "+c.err))

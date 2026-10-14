@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/keyolk/tuikit/keys"
 )
 
 func (m model) viewConfirmDelete() string {
@@ -29,7 +31,7 @@ func (m model) viewConfirmDelete() string {
 		}
 	}
 	lines = append(lines, "")
-	lines = append(lines, mutedStyle.Render("y/Enter delete | n/ESC cancel"))
+	lines = append(lines, m.keyHint(max(10, w-4), ctxDelete))
 	h := min(len(lines)+2, max(6, m.height-4))
 	return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 }
@@ -67,31 +69,16 @@ func (m model) popupSize(wantRows int) (int, int) {
 }
 
 func (m model) viewPopup() string {
-	if m.mode == modeHelp {
-		w, h := m.popupSize(len(helpLines()) + 1)
-		inner := max(10, w-4)
-		var lines []string
-		lines = append(lines, sectionTitleStyle.Render(" Help "))
-		lines = append(lines, "")
-		for _, l := range helpLines() {
-			lines = append(lines, truncate(l, inner))
+	if m.mode == modeHelp || m.mode == modeFormHelp {
+		w, h := m.helpSize()
+		title, stack := " Help ", []keys.Ctx{ctxHelp}
+		if m.mode == modeFormHelp {
+			title, stack = " Form Help ", []keys.Ctx{ctxFormHelp}
 		}
-		lines = append(lines, "")
-		lines = append(lines, mutedStyle.Render("ESC / ? close"))
-		return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
-	}
-
-	if m.mode == modeFormHelp {
-		w, h := m.popupSize(len(formHelpLines()) + 1)
-		inner := max(10, w-4)
-		var lines []string
-		lines = append(lines, sectionTitleStyle.Render(" Form Help "))
-		lines = append(lines, "")
-		for _, l := range formHelpLines() {
-			lines = append(lines, truncate(l, inner))
-		}
-		lines = append(lines, "")
-		lines = append(lines, mutedStyle.Render("ESC / ? close  |  any field: Enter saves"))
+		page, _ := m.helpPage()
+		lines := []string{sectionTitleStyle.Render(title), ""}
+		lines = append(lines, page...)
+		lines = append(lines, "", m.keyHint(max(10, w-4), stack...))
 		return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 	}
 
@@ -123,7 +110,7 @@ func (m model) viewPopup() string {
 				}
 			}
 		}
-		lines = append(lines, mutedStyle.Render("up/dn move | Enter jump | ESC cancel"))
+		lines = append(lines, m.keyHint(inner, ctxSearch))
 		return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 	}
 
@@ -156,6 +143,6 @@ func (m model) viewPopup() string {
 			}
 		}
 	}
-	lines = append(lines, mutedStyle.Render("type filter | up/dn move | Enter select | ESC cancel"))
+	lines = append(lines, m.keyHint(inner, ctxPicker))
 	return modalStyle.Width(w).Height(h).Render(strings.Join(lines, "\n"))
 }

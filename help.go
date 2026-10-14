@@ -1,8 +1,50 @@
 package main
 
-import "strings"
+import (
+	"slices"
+	"strings"
 
-func helpLines() []string {
+	"github.com/charmbracelet/x/ansi"
+	"github.com/keyolk/tuikit/keys"
+)
+
+// The `?` pages. The key lists come from the binding table (bindings.go), so
+// they cannot drift from what the keys do; only the notes below — what the
+// timeline draws, what an overlay changes, what the form accepts — are prose,
+// because they describe behaviour, not keys.
+
+// helpStacks are the stacks the main help documents, in reading order: the
+// list view first, then what only the grid, a staged change, the panel, the
+// y prefix and the slot list add.
+var helpStacks = [][]keys.Ctx{
+	{ctxList, ctxNudge, ctxSchedule, ctxGlobal, ctxAbort},
+	{ctxDetail, ctxGrid},
+	{ctxPending},
+	{ctxPanel},
+	{ctxYank},
+	{ctxSlots},
+}
+
+// formHelpStacks are the form's: moving between fields, typing in one, the
+// attendee field and the confirm step.
+var formHelpStacks = [][]keys.Ctx{
+	{ctxForm, ctxAbort},
+	{ctxSuggest, ctxField},
+	{ctxInvite},
+}
+
+func note(title string, lines ...string) keys.Section {
+	s := keys.Section{Title: title}
+	for _, l := range lines {
+		s.Entries = append(s.Entries, keys.Entry{Help: l})
+	}
+	return s
+}
+
+// helpNotes is the main help's prose. ASCII separators only: these lines
+// are drawn in a bordered popup on terminals that may draw ambiguous-width
+// glyphs two cells wide.
+func helpNotes() []keys.Section {
 	tzLabels := make([]string, 0, len(settings.timezones))
 	for _, t := range settings.timezones {
 		tzLabels = append(tzLabels, t.label)
@@ -11,115 +53,137 @@ func helpLines() []string {
 	if tzHint == "" {
 		tzHint = "local"
 	}
-	return []string{
-		"The bottom bar only names keys that would do something right now, so",
-		"this list is the complete one — M, Z, R, D/W and tab live here.",
-		"",
-		"Views   list (agenda) | g week-grid | M month-grid | g back to list",
-		"List    h/l move by step | d/w/m set step (day/week/month) | j/k select",
-		"Grid    h/l +/-day | j/k +/-week | focus cursor only; calendar stays put",
-		"        detail pane splits right (wide) or bottom (tall); A/L/E/X act on focus day",
-		"t       TIMELINE (list view): every row gets a 00-24h bar on one shared",
-		"        axis, so events that overlap line up vertically — the thing a flat",
-		"        agenda cannot show. Under each date header a ruler shades how many",
-		"        events run at each hour (grey=light, amber/red=stacked, scaled",
-		"        across all loaded days) and prints that day's peak count.",
-		"        `|` = right now · `<`/`>` = the window continues past midnight.",
-		"        Bars follow the row: blue when active now, amber when unsaved.",
-		"        t hides it when a long title needs the width back.",
-		"a       ACTIVE NOW panel: every event in effect at this moment, soonest-", "        ending first. Multi-day windows (maintenance, on-call, PTO) show",
-		"        up here even when the agenda has scrolled them out of sight.",
-		"        `a` only TOGGLES the panel — it never moves your cursor, and the",
-		"        schedule keeps taking every key while the panel sits above it.",
-		"tab     cycle focus: schedule -> day detail (grid) -> active panel",
-		"        Inside the panel: j/k move · Enter jump the schedule to it",
-		"        · esc leave the panel (still open) · E/X/L act on the highlighted",
-		"        window · a closes it. The header shows the live count.",
-		"e       CALENDAR SWITCHER: fuzzy pick across recent *, subscribed,",
-		"        and aliases; type a raw email/id to open one directly",
-		"        (picking one here turns an overlay off — you asked for that",
-		"        single calendar)",
-		"O       OVERLAY several calendars into ONE agenda. Every row gains a",
-		"        color dot + the owner's name, and the 24h timeline bars are",
-		"        tinted per person, so the shared axis shows not just THAT two",
-		"        events overlap but WHOSE they are. Every existing view works",
-		"        on the merged set: list, grids, /, the a panel, t timeline.",
-		"        The legend under the agenda maps color -> person and prints",
-		"        each one's event count; a calendar that could not be read is",
-		"        shown hollow with the reason, so it never passes for an empty",
-		"        one. E/X/D/W and the )( }{ >< moves act on the SELECTED ROW'S",
-		"        calendar (its owner is named in the confirm step); N still",
-		"        creates on the calendar you have open. Enter with nothing",
-		"        picked turns the overlay back off.",
-		"Common  n jump to now (today, else nearest upcoming) | R refresh | Z timezone (" + tzHint + ")",
-		"Open    Enter opens the Google Calendar event page",
-		"L       other links picker (zoom, docs, ~) (fuzzy)",
-		"A       attendees picker -> open that person's calendar",
-		"y...    copy selected event: yy summary | yu calendar URL",
-		"        ys start | ye end | yd description (OSC 52 clipboard)",
-		"N       new event | E edit selected | X delete (confirm)",
-		"        Both route through a confirm step before anything reaches",
-		"        Google. Creating shows the resolved time, endless recurrence,",
-		"        and how many people get mail; EDITING shows only what CHANGES",
-		"        (old -> new), with time moves and attendee add/removes marked !.",
-		"        A start in the past, a >=8h or <5m duration, and an unchanged",
-		"        edit are all called out — none of them are blocked, since each",
-		"        has a real use, but none of them should happen by accident.",
-		"f       FIND A TIME across several people: pick who is coming (space",
-		"        toggles, type a full email to add someone not on screen), then",
-		"        Enter reads everyone's free/busy and ranks the open slots.",
-		"        Everyone-free slots come first (green ✓4/4); partial ones stay",
-		"        in the list (amber 3/4) and name who is blocked — a 3/4 slot at",
-		"        a good hour often beats no slot at all. `?` after a badge counts",
-		"        people whose free/busy is not readable: they are neither counted",
-		"        free nor busy. Enter prefills the new-event form with that slot",
-		"        and those attendees, so nothing is mailed until you submit it.",
-		"        In the slot list: d cycles the meeting length · w toggles",
-		"        weekends · H opens the day up to 24h · R re-reads · esc goes",
-		"        back to the participant picker.",
-		"Time    ) / ( move start +/-15m | } / { lengthen/shorten 15m",
-		"        > / < move to next/prev CALENDAR day (the wall-clock time is",
-		"        kept, so a move across a DST boundary stays at 10:00)",
-		"        These only change the VIEW: the new time shows with a ! marker",
-		"        and the bar turns amber. Nothing reaches Google until you press:",
-		"s       SAVE the staged time change   |   esc  discard it",
-		"        (repeated nudges compose into one save; q refuses to quit while",
-		"        a change is unsaved)",
-		"D / W   duplicate | copy to next week (these apply immediately)",
-		"u       undo last create/edit/delete/save",
-		"Form    date: today/tmr/mon/+3d/7-20 | time: 3pm/1530/15시 | dur: 1h30m/90m",
-		"        repeat: daily/weekly/biweekly/monthly/weekdays (+ x4 for 4 times)",
-		"        location: ctrl+n/ctrl+p cycle suggestions, ctrl+y accept",
-		"/       fuzzy search across loaded events, Enter jumps",
-		"q       quit (ctrl+c quits from anywhere)  |  ESC backs out of any overlay",
-		"",
-		"Aliases defined in " + configPath() + " ([aliases] section)",
+	return []keys.Section{
+		note("About the bar",
+			"The bottom bar names only keys that would do something right now; this page lists them all.",
+			"Shortcuts also work under a Korean (2-beolsik) input source."),
+		note("Timeline (t, list view)",
+			"Every row gets a 00-24h bar on one shared axis, so events that overlap line up vertically.",
+			"Under each date header a ruler shades how many events run at each hour (grey light, amber/red stacked, scaled across the loaded days) and prints the day's peak.",
+			"| is right now; < and > mean the window continues past midnight. Bars are blue when active now, amber when unsaved."),
+		note("Active-now panel (a)",
+			"Every event in effect at this moment, soonest-ending first. Multi-day windows (maintenance, on-call, PTO) show up even when the agenda has scrolled past them.",
+			"a only toggles the panel and never moves the cursor; tab steps into it. The header shows the live count."),
+		note("Overlay (O)",
+			"Every row gains a color dot and the owner's name, and timeline bars are tinted per person, so the axis shows WHOSE events overlap.",
+			"The legend maps color to person with each one's count; a calendar that could not be read is drawn hollow with the reason, never as an empty one.",
+			"Edit, delete, duplicate and time moves act on the selected row's calendar (named in the confirm step); N creates on the calendar you have open.",
+			"Picking a single calendar with e turns the overlay off."),
+		note("Changing events",
+			"N, E and X go through a confirm step before anything reaches Google. Editing shows only what changes (old -> new), with time moves and attendee changes marked !.",
+			"A start in the past, a duration of 8h or more or under 5m, and an unchanged edit are called out but not blocked.",
+			"Time moves only change the view: the new time shows with a ! marker and the bar turns amber until s saves it. Repeated moves compose into one save; q refuses to quit while one is unsaved.",
+			"Quick saves and duplicates never mail attendees (use E to notify)."),
+		note("Find a time (f)",
+			"Pick who is coming (space toggles; type a full email to add someone not on screen), then enter reads everyone's free/busy and ranks the open slots.",
+			"Everyone-free slots come first (green 4/4); partial ones (amber 3/4) name who is blocked. ? after a badge counts people whose free/busy is not readable.",
+			"Enter on a slot prefills the new-event form; nothing is mailed until you submit it."),
+		note("Files",
+			"Timezones cycled by Z: "+tzHint,
+			"Calendar aliases: "+configPath()+" ([aliases])",
+			"Key overrides: "+keys.ConfigPath(appName)+" (action: [keys], e.g. quit: [x])"),
 	}
 }
 
-// formHelpLines is the form-mode help overlay, shown when `?` is pressed inside
-// the create/edit form. It collects the field-navigation, flexible-input,
-// repeat, and quick-action hints in one place so the user can discover them
-// while composing without backing out to the global help.
-func formHelpLines() []string {
-	return []string{
-		"Form    Enter save from any field | Tab/S-Tab next field",
-		"        j/k move field | Enter/i edit field | Space toggle attendee",
-		"        ESC blur field / close form",
-		"        ctrl+n/ctrl+p cycle location suggestions | ctrl+y accept",
-		"",
-		"Date    today · tmr · yst · +3d · -1d · 2w · +1m · mon…sun · next fri",
-		"        7/20 · 07-20 · 0720 · 20 · 2026-07-20 · 오늘 · 내일 · 어제",
-		"Start   15:00 · 3pm · 3:30pm · 11am · 12am · 12pm · 1530 · 930 · 15 · 15시 · 9시30분",
-		"Dur     30 · 45m · 90m · 1h · 1.5h · 1h30m · 1일 · 30분 · 1시간30분",
-		"Repeat  daily · weekly · biweekly · monthly · yearly · weekdays",
-		"        (+ x4 for 4 times) · 매일 · 매주 · 격주 · 매월 · 평일",
-		"        unrecognized text is rejected (no wrong recurrence created)",
-		"Notes   free text (agenda/body)",
-		"",
-		"Quick   ) / ( move start +/-15m | } / { lengthen/shorten 15m | > / < move +/-1 day",
-		"        these only stage the change — s saves it, esc discards",
-		"        D duplicate | W copy to next week | u undo",
-		"        quick actions never mail attendees (use E to notify)",
+// formHelpNotes is the form help's prose: what each field accepts.
+func formHelpNotes() []keys.Section {
+	return []keys.Section{
+		note("Field syntax",
+			"Date: today, tmr, yst, +3d, -1d, 2w, +1m, mon..sun, next fri, 7/20, 07-20, 0720, 20, 2026-07-20, 오늘, 내일, 어제",
+			"Start: 15:00, 3pm, 3:30pm, 11am, 12am, 12pm, 1530, 930, 15, 15시, 9시30분",
+			"Duration: 30, 45m, 90m, 1h, 1.5h, 1h30m, 1일, 30분, 1시간30분",
+			"Repeat: daily, weekly, biweekly, monthly, yearly, weekdays (+ x4 for 4 times), 매일, 매주, 격주, 매월, 평일. Unrecognized text is rejected, so no wrong recurrence is created.",
+			"Notes: free text (agenda / body)."),
+		note("After saving",
+			"Time moves on the agenda: ) ( shift 15m, } { resize 15m, > < move a day. They only stage the change: s saves it, esc discards.",
+			"Quick actions never mail attendees (use E to notify)."),
 	}
+}
+
+// helpNames spells keys as words on the help page.
+var helpNames = keys.Names{}
+
+// helpPage renders the open help page into the popup's content area and
+// returns the offset RenderHelp clamped. Update stores that offset back
+// (help.down / help.up), so a held j cannot run the stored offset past the end.
+func (m model) helpPage() (lines []string, offset int) {
+	w, rows := m.helpBodySize()
+	o := keys.Opts{State: m.keyState}
+	km := m.keymap()
+	var secs, notes []keys.Section
+	if m.mode == modeFormHelp {
+		secs, notes = km.Help(o, formHelpStacks...), formHelpNotes()
+	} else {
+		secs, notes = km.Help(o, helpStacks...), helpNotes()
+	}
+	secs = inReadingOrder(secs)
+	st := ui.HelpStyle()
+	st.Names = helpNames
+	secs = append(secs, wrapNotes(secs, notes, w)...)
+	lines, offset = keys.RenderHelp(secs, w, rows, m.helpOff, st)
+	for i := range lines {
+		lines[i] = asciiEllipsis(lines[i])
+	}
+	return lines, offset
+}
+
+// helpOrder is the order sections are read in. Help orders them by where the
+// stack walk first meets them, which puts the list's movement keys before
+// quit and help.
+var helpOrder = []string{grpGeneral, grpList, grpGrid, grpEvent, grpTime, grpViews,
+	grpPanel, grpCopy, grpFind, grpForm, grpField, grpInvite}
+
+func inReadingOrder(secs []keys.Section) []keys.Section {
+	rank := func(title string) int {
+		if i := slices.Index(helpOrder, title); i >= 0 {
+			return i
+		}
+		return len(helpOrder)
+	}
+	out := slices.Clone(secs)
+	slices.SortStableFunc(out, func(a, b keys.Section) int { return rank(a.Title) - rank(b.Title) })
+	return out
+}
+
+// helpSize is the help popup: wider than the pickers (the descriptions are
+// sentences) and as tall as the body allows.
+func (m model) helpSize() (w, h int) {
+	bodyWidth := max(20, m.width-2)
+	w = min(bodyWidth, max(m.preferredOverlayWidth(), 80))
+	h = max(5, m.height-4)
+	return w, h
+}
+
+// helpBodySize is the part of the help popup the key list scrolls in: the
+// popup minus border, padding, the title and its blank line, and the hint.
+func (m model) helpBodySize() (w, rows int) {
+	pw, ph := m.helpSize()
+	return max(10, pw-4), max(1, ph-4)
+}
+
+// wrapNotes word-wraps note entries to the description column RenderHelp will
+// give them. Entries have no keys, so the column starts after the widest key
+// list on the page — the same arithmetic as RenderHelp.
+func wrapNotes(secs, notes []keys.Section, width int) []keys.Section {
+	keyW := 0
+	for _, s := range secs {
+		for _, e := range s.Entries {
+			names := make([]string, len(e.Keys))
+			for i, k := range e.Keys {
+				names[i] = helpNames.Name(k)
+			}
+			keyW = max(keyW, ansi.StringWidth(strings.Join(names, "/")))
+		}
+	}
+	descW := max(10, width-min(keyW, width/3)-4)
+	out := make([]keys.Section, len(notes))
+	for i, s := range notes {
+		out[i] = keys.Section{Title: s.Title}
+		for _, e := range s.Entries {
+			for _, l := range strings.Split(ansi.Wordwrap(e.Help, descW, ""), "\n") {
+				out[i].Entries = append(out[i].Entries, keys.Entry{Help: l})
+			}
+		}
+	}
+	return out
 }

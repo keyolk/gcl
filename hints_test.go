@@ -45,7 +45,9 @@ func TestHintBarAlwaysKeepsTheEscapeKeys(t *testing.T) {
 	// `?` and `q` fell off the right edge of the old bar at every width — the
 	// two keys a lost user needs most were the two reliably hidden.
 	ev := hintEvent([]string{"a@x.com"}, []string{"https://z/1"})
-	for _, w := range []int{16, 24, 40, 80, 200} {
+	// 18 is the narrowest bar that holds both pinned hints and the "~" that
+	// says others were dropped; below that the frame truncates the line.
+	for _, w := range []int{18, 24, 40, 80, 200} {
 		got := stripANSI(hintModel(w, ev).shortcutHint())
 		if !strings.Contains(got, "? help") || !strings.Contains(got, "q quit") {
 			t.Errorf("width %d dropped an escape key: %q", w, got)
@@ -104,7 +106,7 @@ func TestHintBarDropsWholeHintsRatherThanSlicingOne(t *testing.T) {
 	if strings.HasSuffix(strings.TrimSpace(got), "-") {
 		t.Errorf("bar ends mid-hint: %q", got)
 	}
-	for _, pair := range []string{"j/k select", "? help", "q quit"} {
+	for _, pair := range []string{"jk select", "? help", "q quit"} {
 		if strings.Contains(got, strings.Fields(pair)[0]+" ") &&
 			!strings.Contains(got, pair) {
 			t.Errorf("hint %q was rendered partially: %q", pair, got)
