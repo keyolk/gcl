@@ -1,0 +1,125 @@
+package main
+
+import "strings"
+
+func helpLines() []string {
+	tzLabels := make([]string, 0, len(settings.timezones))
+	for _, t := range settings.timezones {
+		tzLabels = append(tzLabels, t.label)
+	}
+	tzHint := strings.Join(tzLabels, "/")
+	if tzHint == "" {
+		tzHint = "local"
+	}
+	return []string{
+		"The bottom bar only names keys that would do something right now, so",
+		"this list is the complete one — M, Z, R, D/W and tab live here.",
+		"",
+		"Views   list (agenda) | g week-grid | M month-grid | g back to list",
+		"List    h/l move by step | d/w/m set step (day/week/month) | j/k select",
+		"Grid    h/l +/-day | j/k +/-week | focus cursor only; calendar stays put",
+		"        detail pane splits right (wide) or bottom (tall); A/L/E/X act on focus day",
+		"t       TIMELINE (list view): every row gets a 00-24h bar on one shared",
+		"        axis, so events that overlap line up vertically — the thing a flat",
+		"        agenda cannot show. Under each date header a ruler shades how many",
+		"        events run at each hour (grey=light, amber/red=stacked, scaled",
+		"        across all loaded days) and prints that day's peak count.",
+		"        `|` = right now · `<`/`>` = the window continues past midnight.",
+		"        Bars follow the row: blue when active now, amber when unsaved.",
+		"        t hides it when a long title needs the width back.",
+		"a       ACTIVE NOW panel: every event in effect at this moment, soonest-", "        ending first. Multi-day windows (maintenance, on-call, PTO) show",
+		"        up here even when the agenda has scrolled them out of sight.",
+		"        `a` only TOGGLES the panel — it never moves your cursor, and the",
+		"        schedule keeps taking every key while the panel sits above it.",
+		"tab     cycle focus: schedule -> day detail (grid) -> active panel",
+		"        Inside the panel: j/k move · Enter jump the schedule to it",
+		"        · esc leave the panel (still open) · E/X/L act on the highlighted",
+		"        window · a closes it. The header shows the live count.",
+		"e       CALENDAR SWITCHER: fuzzy pick across recent *, subscribed,",
+		"        and aliases; type a raw email/id to open one directly",
+		"        (picking one here turns an overlay off — you asked for that",
+		"        single calendar)",
+		"O       OVERLAY several calendars into ONE agenda. Every row gains a",
+		"        color dot + the owner's name, and the 24h timeline bars are",
+		"        tinted per person, so the shared axis shows not just THAT two",
+		"        events overlap but WHOSE they are. Every existing view works",
+		"        on the merged set: list, grids, /, the a panel, t timeline.",
+		"        The legend under the agenda maps color -> person and prints",
+		"        each one's event count; a calendar that could not be read is",
+		"        shown hollow with the reason, so it never passes for an empty",
+		"        one. E/X/D/W and the )( }{ >< moves act on the SELECTED ROW'S",
+		"        calendar (its owner is named in the confirm step); N still",
+		"        creates on the calendar you have open. Enter with nothing",
+		"        picked turns the overlay back off.",
+		"Common  n jump to now (today, else nearest upcoming) | R refresh | Z timezone (" + tzHint + ")",
+		"Open    Enter opens the Google Calendar event page",
+		"L       other links picker (zoom, docs, ~) (fuzzy)",
+		"A       attendees picker -> open that person's calendar",
+		"y...    copy selected event: yy summary | yu calendar URL",
+		"        ys start | ye end | yd description (OSC 52 clipboard)",
+		"N       new event | E edit selected | X delete (confirm)",
+		"        Both route through a confirm step before anything reaches",
+		"        Google. Creating shows the resolved time, endless recurrence,",
+		"        and how many people get mail; EDITING shows only what CHANGES",
+		"        (old -> new), with time moves and attendee add/removes marked !.",
+		"        A start in the past, a >=8h or <5m duration, and an unchanged",
+		"        edit are all called out — none of them are blocked, since each",
+		"        has a real use, but none of them should happen by accident.",
+		"f       FIND A TIME across several people: pick who is coming (space",
+		"        toggles, type a full email to add someone not on screen), then",
+		"        Enter reads everyone's free/busy and ranks the open slots.",
+		"        Everyone-free slots come first (green ✓4/4); partial ones stay",
+		"        in the list (amber 3/4) and name who is blocked — a 3/4 slot at",
+		"        a good hour often beats no slot at all. `?` after a badge counts",
+		"        people whose free/busy is not readable: they are neither counted",
+		"        free nor busy. Enter prefills the new-event form with that slot",
+		"        and those attendees, so nothing is mailed until you submit it.",
+		"        In the slot list: d cycles the meeting length · w toggles",
+		"        weekends · H opens the day up to 24h · R re-reads · esc goes",
+		"        back to the participant picker.",
+		"Time    ) / ( move start +/-15m | } / { lengthen/shorten 15m",
+		"        > / < move to next/prev CALENDAR day (the wall-clock time is",
+		"        kept, so a move across a DST boundary stays at 10:00)",
+		"        These only change the VIEW: the new time shows with a ! marker",
+		"        and the bar turns amber. Nothing reaches Google until you press:",
+		"s       SAVE the staged time change   |   esc  discard it",
+		"        (repeated nudges compose into one save; q refuses to quit while",
+		"        a change is unsaved)",
+		"D / W   duplicate | copy to next week (these apply immediately)",
+		"u       undo last create/edit/delete/save",
+		"Form    date: today/tmr/mon/+3d/7-20 | time: 3pm/1530/15시 | dur: 1h30m/90m",
+		"        repeat: daily/weekly/biweekly/monthly/weekdays (+ x4 for 4 times)",
+		"        location: ctrl+n/ctrl+p cycle suggestions, ctrl+y accept",
+		"/       fuzzy search across loaded events, Enter jumps",
+		"q       quit (ctrl+c quits from anywhere)  |  ESC backs out of any overlay",
+		"",
+		"Aliases defined in " + configPath() + " ([aliases] section)",
+	}
+}
+
+// formHelpLines is the form-mode help overlay, shown when `?` is pressed inside
+// the create/edit form. It collects the field-navigation, flexible-input,
+// repeat, and quick-action hints in one place so the user can discover them
+// while composing without backing out to the global help.
+func formHelpLines() []string {
+	return []string{
+		"Form    Enter save from any field | Tab/S-Tab next field",
+		"        j/k move field | Enter/i edit field | Space toggle attendee",
+		"        ESC blur field / close form",
+		"        ctrl+n/ctrl+p cycle location suggestions | ctrl+y accept",
+		"",
+		"Date    today · tmr · yst · +3d · -1d · 2w · +1m · mon…sun · next fri",
+		"        7/20 · 07-20 · 0720 · 20 · 2026-07-20 · 오늘 · 내일 · 어제",
+		"Start   15:00 · 3pm · 3:30pm · 11am · 12am · 12pm · 1530 · 930 · 15 · 15시 · 9시30분",
+		"Dur     30 · 45m · 90m · 1h · 1.5h · 1h30m · 1일 · 30분 · 1시간30분",
+		"Repeat  daily · weekly · biweekly · monthly · yearly · weekdays",
+		"        (+ x4 for 4 times) · 매일 · 매주 · 격주 · 매월 · 평일",
+		"        unrecognized text is rejected (no wrong recurrence created)",
+		"Notes   free text (agenda/body)",
+		"",
+		"Quick   ) / ( move start +/-15m | } / { lengthen/shorten 15m | > / < move +/-1 day",
+		"        these only stage the change — s saves it, esc discards",
+		"        D duplicate | W copy to next week | u undo",
+		"        quick actions never mail attendees (use E to notify)",
+	}
+}
