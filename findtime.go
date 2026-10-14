@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // "Find a time" — pick people, then pick a slot that works for all of them.
@@ -500,12 +499,3 @@ func trimLastRune(s string) string {
 	r := []rune(s)
 	return string(r[:len(r)-1])
 }
-
-var (
-	// A fully-available slot is the answer; a partial one is a compromise. The
-	// two must not be told apart by reading digits.
-	slotAllFreeStyle = lipgloss.NewStyle().Bold(true).
-				Foreground(lipgloss.Color("232")).Background(lipgloss.Color("77"))
-	slotPartialStyle = lipgloss.NewStyle().Bold(true).
-				Foreground(lipgloss.Color("232")).Background(lipgloss.Color("214"))
-)
