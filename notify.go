@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/keyolk/tuikit/tmux"
 )
 
 // notifyStatePath is where already-fired reminders are recorded so the same
@@ -122,14 +124,18 @@ var errNoToastSink = errors.New("no notification sink (not in tmux, osascript un
 // which is modal and grabs the keyboard. It never writes to stdout; it returns
 // errNoToastSink when no sink exists, or the sink errors when none delivered.
 func sendToast(msg string) error {
+	return sendToastVia(tmux.New(nil), msg)
+}
+
+// sendToastVia is sendToast with the tmux client injected, so tests can drive
+// it with tmux.Fake instead of the real server.
+func sendToastVia(tm tmux.Client, msg string) error {
 	delivered := false
 	var errs []error
-	if os.Getenv("TMUX") != "" {
-		if err := exec.Command("tmux", "display-message", msg).Run(); err != nil {
-			errs = append(errs, fmt.Errorf("tmux display-message: %w", err))
-		} else {
-			delivered = true
-		}
+	if err := flashTmux(tm, msg); err == nil {
+		delivered = true
+	} else if !errors.Is(err, tmux.ErrNotInTmux) {
+		errs = append(errs, fmt.Errorf("tmux display-message: %w", err))
 	}
 	if osascriptPath != "" {
 		script := fmt.Sprintf("display notification %q with title %q", msg, "gcal")
@@ -147,6 +153,18 @@ func sendToast(msg string) error {
 		return errNoToastSink
 	}
 	return errors.Join(errs...)
+}
+
+// flashTmux shows msg on the tmux status line of the current client.
+//
+// This goes through Client.Run because the kit's typed DisplayMessage is the
+// `-p` (print to stdout) form, which would return the text instead of showing
+// it. tmux expands the message as a format, so `#` is doubled: a title like
+// "C# sync" or "#{pane_id}" must reach the user as written. `--` keeps a
+// title that starts with `-` from being parsed as a flag.
+func flashTmux(tm tmux.Client, msg string) error {
+	_, err := tm.Run("display-message", "--", strings.ReplaceAll(msg, "#", "##"))
+	return err
 }
 
 // loadNotifiedKeys reads the fired-reminder state file.

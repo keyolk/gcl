@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/keyolk/tuikit/tmux"
 )
 
 // captureStdout runs fn and returns whatever it wrote to os.Stdout.
@@ -136,5 +138,37 @@ func TestRecentsLoadKeepsEarlierPicksInFront(t *testing.T) {
 	want := []string{"new@x.com", "a@x.com", "b@x.com"}
 	if r := got.(model).recents; !slices.Equal(r, want) {
 		t.Errorf("recents = %v, want %v", r, want)
+	}
+}
+
+// Inside tmux the reminder flashes the status line through the kit's client:
+// never a popup (modal, steals the keyboard), never `-p` (prints instead of
+// showing), and with `#` escaped so tmux does not expand the title as a format.
+func TestSendToastFlashesTmuxStatusLine(t *testing.T) {
+	orig := osascriptPath
+	osascriptPath = ""
+	defer func() { osascriptPath = orig }()
+
+	f := tmux.NewFake().On("display-message", "", nil)
+	if err := sendToastVia(tmux.Client{Runner: f}, "gcal: in 5m  C# sync #{pane_id}"); err != nil {
+		t.Fatalf("sendToastVia: %v", err)
+	}
+	want := []string{"display-message", "--", "gcal: in 5m  C## sync ##{pane_id}"}
+	if calls := f.Calls(); len(calls) != 1 || !slices.Equal(calls[0], want) {
+		t.Errorf("tmux calls = %q, want one %q", calls, want)
+	}
+}
+
+// A tmux failure with no other sink is reported, not mistaken for "no sink"
+// (which would silently fall back to the status line / stdout).
+func TestSendToastReportsTmuxFailure(t *testing.T) {
+	orig := osascriptPath
+	osascriptPath = ""
+	defer func() { osascriptPath = orig }()
+
+	f := tmux.NewFake().On("display-message", "", errors.New("no current client"))
+	err := sendToastVia(tmux.Client{Runner: f}, "gcal: in 5m  standup")
+	if err == nil || errors.Is(err, errNoToastSink) || !strings.Contains(err.Error(), "no current client") {
+		t.Errorf("err = %v, want the tmux failure", err)
 	}
 }
