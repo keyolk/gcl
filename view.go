@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/keyolk/tuikit/render"
 )
 
 type splitKind int
@@ -274,15 +275,8 @@ func ansiTruncate(s string, width int) string {
 	return ansi.Truncate(s, width, "")
 }
 
-// ansiTruncateTail is ansiTruncate with a "~" marker when something was cut, for
-// styled content (pills, headers) where the plain truncate() would slice through
-// an escape sequence and bleed color into the rest of the frame.
+// ansiTruncateTail is ansiTruncate with cutMarker when something was cut, for
+// styled content (pills, headers).
 func ansiTruncateTail(s string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if lipgloss.Width(s) <= width {
-		return s
-	}
-	return ansi.Truncate(s, width, "~")
+	return render.TruncateMarker(s, width, cutMarker)
 }

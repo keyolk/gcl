@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/keyolk/tuikit/render"
 )
 
 // Overlaying several people's calendars in one agenda.
@@ -248,10 +249,9 @@ func shortLoadError(err error) string {
 	case strings.Contains(msg, "not found"):
 		return "not found"
 	}
-	if len(msg) > 24 {
-		return msg[:24] + "~"
-	}
-	return msg
+	// Cut by cells, not bytes: a byte cut can split a Korean error message
+	// mid-rune.
+	return render.TruncateMarker(msg, 25, cutMarker)
 }
 
 // newOverlayState seeds the picker. The currently-open calendar is

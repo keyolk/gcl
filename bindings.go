@@ -23,7 +23,7 @@ import (
 //   - `? help` and `q quit` are Pinned: never dropped, however narrow.
 //   - whole hints are dropped from the low-priority end, never sliced.
 //   - no East-Asian-ambiguous glyphs: key names are words, separators ASCII,
-//     and the kit's "…" marker is swapped for "~" (asciiEllipsis).
+//     and every cut marker is "~" (cutMarker), never "…".
 //
 // User overrides live in ~/.config/gcl/keys.yaml (keys.ConfigPath), checked
 // against allStacks so a rebinding cannot hide quit or help.

@@ -5,20 +5,12 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/keyolk/tuikit/render"
 )
 
+// truncate cuts plain text to width cells, marking the cut with cutMarker.
 func truncate(s string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if lipgloss.Width(s) <= width {
-		return s
-	}
-	runes := []rune(s)
-	for len(runes) > 0 && lipgloss.Width(string(runes))+1 > width {
-		runes = runes[:len(runes)-1]
-	}
-	return string(runes) + "~"
+	return render.TruncateMarker(s, width, cutMarker)
 }
 
 func wrap(s string, width int) string {
@@ -61,7 +53,7 @@ func truncateLines(s string, maxLines int, width int) string {
 		for _, line := range wrapped {
 			if len(out) >= maxLines {
 				if len(out) > 0 {
-					out[len(out)-1] = truncate(out[len(out)-1], max(1, width-1)) + "~"
+					out[len(out)-1] = truncate(out[len(out)-1], max(1, width-1)) + cutMarker
 				}
 				return strings.Join(out, "\n")
 			}

@@ -222,7 +222,7 @@ func shortCalendarID(cal string) string {
 		local = cal[:i]
 	}
 	if len(local) > 12 {
-		local = local[:12] + "~"
+		local = local[:12] + cutMarker
 	}
 	return "group:" + local
 }
