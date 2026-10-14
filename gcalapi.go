@@ -534,10 +534,10 @@ func loadRecentCalendars() []string {
 }
 
 // rememberCalendar prepends value to the recent list (dedup, cap 30).
-func rememberCalendar(value string) {
+func rememberCalendar(value string) error {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return
+		return nil
 	}
 	recent := loadRecentCalendars()
 	next := []string{value}
@@ -549,8 +549,13 @@ func rememberCalendar(value string) {
 	if len(next) > 30 {
 		next = next[:30]
 	}
-	_ = os.MkdirAll(cacheDir(), 0o755)
-	_ = os.WriteFile(recentCalendarsPath(), []byte(strings.Join(next, "\n")+"\n"), 0o644)
+	if err := os.MkdirAll(cacheDir(), 0o755); err != nil {
+		return fmt.Errorf("save recent calendars: %w", err)
+	}
+	if err := os.WriteFile(recentCalendarsPath(), []byte(strings.Join(next, "\n")+"\n"), 0o644); err != nil {
+		return fmt.Errorf("save recent calendars: %w", err)
+	}
+	return nil
 }
 
 // createEventInput describes a new event to insert.

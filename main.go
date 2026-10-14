@@ -161,6 +161,14 @@ type fetchTickMsg struct{ reqID int }
 // notifyTickMsg fires the in-app reminder watcher on an interval.
 type notifyTickMsg struct{}
 
+// notifyResultMsg reports one in-app reminder scan. shown carries reminders that
+// had no toast sink and must be surfaced in the status line instead.
+type notifyResultMsg struct {
+	fired int
+	shown []string
+	err   error
+}
+
 // clockTickMsg is a pure repaint trigger for time-relative UI (active count,
 // "now" divider, countdowns). It carries no data and changes no state.
 type clockTickMsg struct{}
@@ -523,7 +531,17 @@ func main() {
 	}
 
 	if *notifyFlag {
-		if err := notifyUpcoming(resolveCalendar(calendar), *notifyWindowFlag); err != nil {
+		// Outside the TUI stdout is a fine last resort (cron mails it, a shell
+		// shows it), so the CLI keeps the print fallback the TUI must not use.
+		deliver := func(msg string) error {
+			err := sendToast(msg)
+			if errors.Is(err, errNoToastSink) {
+				fmt.Println(msg)
+				return nil
+			}
+			return err
+		}
+		if _, err := notifyUpcoming(resolveCalendar(calendar), *notifyWindowFlag, deliver); err != nil {
 			fatalf("notify: %v", err)
 		}
 		return
@@ -581,8 +599,20 @@ func notifyTickCmd() tea.Cmd {
 func (m model) notifyScanCmd() tea.Cmd {
 	calendar := m.calendar
 	return func() tea.Msg {
-		_ = notifyUpcoming(calendar, settings.notifyWindow)
-		return nil
+		// This runs on a Cmd goroutine while the alt screen is up: nothing here
+		// may print. Reminders without a toast sink are handed back to Update
+		// and shown in the status line instead.
+		var shown []string
+		deliver := func(msg string) error {
+			err := sendToast(msg)
+			if errors.Is(err, errNoToastSink) {
+				shown = append(shown, msg)
+				return nil
+			}
+			return err
+		}
+		fired, err := notifyUpcoming(calendar, settings.notifyWindow, deliver)
+		return notifyResultMsg{fired: fired, shown: shown, err: err}
 	}
 }
 
@@ -600,6 +630,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case notifyTickMsg:
 		// Fire a background scan and re-arm the watcher.
 		return m, tea.Batch(m.notifyScanCmd(), notifyTickCmd())
+	case notifyResultMsg:
+		switch {
+		case msg.err != nil:
+			m.status = "reminder failed: " + msg.err.Error()
+		case len(msg.shown) > 0:
+			m.status = strings.Join(msg.shown, " · ")
+		case msg.fired > 0:
+			m.status = fmt.Sprintf("%d reminder(s) sent", msg.fired)
+		}
+		return m, nil
 	case clockTickMsg:
 		// Nothing to update: View() reads time.Now() directly. Just re-arm so
 		// the next repaint happens.
@@ -1246,6 +1286,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeHelp
 	}
 	return m, nil
+}
+
+// joinNote appends note to an existing status note with the usual separator.
+func joinNote(existing, note string) string {
+	if existing == "" {
+		return note
+	}
+	return existing + " · " + note
 }
 
 // reload marks loading and returns the fetch command.
@@ -1950,7 +1998,11 @@ func (m model) choosePicker(it pickerItem) (tea.Model, tea.Cmd) {
 			// to survive until the load lands (see eventsMsg).
 			m.pendingNote = "overlay off · " + displayNameForCalendar(it.value)
 		}
-		rememberCalendar(it.value)
+		if err := rememberCalendar(it.value); err != nil {
+			// The switch itself still works; only the recents list is stale.
+			// Ride pendingNote so the load's own status doesn't erase it.
+			m.pendingNote = joinNote(m.pendingNote, err.Error())
+		}
 		return m, m.reload()
 	}
 	m.mode = modeNormal
