@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/keyolk/tuikit/fuzzy"
 )
 
 func (m model) searchMatches() []searchMatch {
@@ -64,32 +67,30 @@ func (m model) searchMatches() []searchMatch {
 	return matches
 }
 
+// fuzzyScore ranks text against a search or picker query: 0 for no match,
+// otherwise positive and higher for a better match. It wraps the kit's scorer
+// (fuzzy.Score), which compares runes — the hand-written one compared a byte
+// of the query with each rune of the text, so a Korean query only matched as
+// an exact substring.
+//
+// Two things are kept from the old scorer: matching ignores case (the query is
+// lowercased, so the kit's smart case never applies), and an exact substring
+// ranks above any scattered match. The kit's length penalty is added back:
+// here the text is a whole event (title, place, attendees, description), and
+// a long description must not push a better match down the list.
 func fuzzyScore(query, text string) int {
 	query = strings.TrimSpace(strings.ToLower(query))
 	text = strings.ToLower(text)
 	if query == "" {
 		return 1
 	}
+	s, _, ok := fuzzy.Score(text, query)
+	if !ok {
+		return 0
+	}
+	s += utf8.RuneCountInString(text) / 8
 	if strings.Contains(text, query) {
-		return 1000 + len(query)*10
+		s += 1000
 	}
-	qi := 0
-	score := 0
-	streak := 0
-	for _, r := range text {
-		if qi >= len(query) {
-			break
-		}
-		if byte(r) == query[qi] {
-			score += 10 + streak*5
-			streak++
-			qi++
-		} else {
-			streak = 0
-		}
-	}
-	if qi == len(query) {
-		return score
-	}
-	return 0
+	return max(1, s)
 }
