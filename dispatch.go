@@ -313,8 +313,11 @@ func (m model) runSchedule(action string) (tea.Model, tea.Cmd) {
 		m.searchIndex = 0
 	case "calendar":
 		m.mode = modeCalendarPicker
-		m.picker = pickerState{title: "Calendar - type to filter, Enter to open", kind: pickerCalendar, items: calendarPickerItems(m.recents)}
+		same := func(s string) string { return s }
+		m.picker = pickerState{title: "Calendar - type to filter, Enter to open", kind: pickerCalendar,
+			items: calendarPickerItems(m.recents, nil, same)}
 		m.input = ""
+		return m, calendarItemsCmd(m.recents)
 	case "new":
 		m.mode = modeCreate
 		m.create = m.newCreateState()

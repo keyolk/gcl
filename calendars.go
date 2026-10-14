@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -62,7 +63,10 @@ func attendeeEmail(label string) string {
 
 // calendarPickerItems builds the `e` picker list: recently-used calendars first,
 // then subscribed calendars from calendarList (with ids), then static aliases.
-func calendarPickerItems(recents []string) []pickerItem {
+// It does no I/O itself: Update opens the picker with cals nil and name a
+// pass-through, and calendarItemsCmd fills in the subscribed calendars and
+// readable names off the UI loop.
+func calendarPickerItems(recents []string, cals []CalendarEntry, name func(string) string) []pickerItem {
 	var items []pickerItem
 	seen := map[string]bool{}
 	add := func(label, value string) {
@@ -75,24 +79,63 @@ func calendarPickerItems(recents []string) []pickerItem {
 
 	for _, r := range recents {
 		label := "* " + r
-		if name := displayNameForCalendar(r); name != "" && name != r {
-			label = "* " + name
+		if n := name(r); n != "" && n != r {
+			label = "* " + n
 		}
 		add(label, r)
 	}
-	if cals, err := listCalendars(); err == nil {
-		for _, c := range cals {
-			label := c.Name
-			if c.AccessRole != "" {
-				label = c.Name + "  (" + c.AccessRole + ")"
-			}
-			add(label, c.ID)
+	for _, c := range cals {
+		label := c.Name
+		if c.AccessRole != "" {
+			label = c.Name + "  (" + c.AccessRole + ")"
 		}
+		add(label, c.ID)
 	}
 	for _, key := range sortedAliasKeys() {
 		add(key+": "+calendarAliases[key], calendarAliases[key])
 	}
 	return items
+}
+
+// calendarItemsMsg carries the full `e` picker list, with the subscribed
+// calendars, from calendarItemsCmd.
+type calendarItemsMsg struct {
+	items []pickerItem
+	err   error
+}
+
+// calendarItemsCmd reads the calendar list (an HTTP call the first time,
+// cached after) and builds the full picker list. It used to run inside Update
+// on `e`, so the first press froze the UI for up to the 30s request timeout.
+func calendarItemsCmd(recents []string) tea.Cmd {
+	recents = slices.Clone(recents)
+	return func() tea.Msg {
+		cals, err := listCalendars()
+		return calendarItemsMsg{items: calendarPickerItems(recents, cals, displayNameForCalendar), err: err}
+	}
+}
+
+// withCalendarItems swaps in the full picker list if the calendar picker is
+// still open, keeping the highlighted entry on the same calendar.
+func (m model) withCalendarItems(msg calendarItemsMsg) model {
+	if msg.err != nil {
+		m.warn("subscribed calendars not listed: " + msg.err.Error())
+	}
+	if m.mode != modeCalendarPicker || m.picker.kind != pickerCalendar {
+		return m
+	}
+	var cur string
+	if items := m.picker.filtered(m.input); len(items) > 0 {
+		cur = items[max(0, min(m.picker.index, len(items)-1))].value
+	}
+	m.picker.items = msg.items
+	for i, it := range m.picker.filtered(m.input) {
+		if it.value == cur {
+			m.picker.index = i
+			break
+		}
+	}
+	return m
 }
 
 func sortedKeys(mp map[string]bool) []string {

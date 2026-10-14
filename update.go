@@ -116,6 +116,8 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.push(srcNotify, toast.Info, fmt.Sprintf("%d reminder(s) sent", msg.fired))
 		}
 		return m, nil
+	case calendarItemsMsg:
+		return m.withCalendarItems(msg), nil
 	case clockTickMsg:
 		// Nothing to update: View() reads time.Now() directly. Just re-arm so
 		// the next repaint happens.
