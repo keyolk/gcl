@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/mouse"
 )
 
 func main() {
@@ -133,7 +134,7 @@ func main() {
 		// printed warning until exit.
 		m.fail(srcStatus, "keys.yaml ignored: "+keysErr.Error())
 	}
-	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(m, append([]tea.ProgramOption{tea.WithAltScreen()}, mouse.ProgramOptions()...)...).Run(); err != nil {
 		fatalf("%v", err)
 	}
 }

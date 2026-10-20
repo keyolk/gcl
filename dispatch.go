@@ -206,14 +206,11 @@ func (m model) runSchedule(action string) (tea.Model, tea.Cmd) {
 		m.say("jumped to " + evs[max(0, min(m.activeIndex, len(evs)-1))].Title)
 
 	case "list.down":
-		m.selected = min(m.selected+1, max(0, len(m.events)-1))
-		m.syncAnchorToSelected()
+		m.selectEvent(m.selected + 1)
 	case "list.up":
-		m.selected = max(0, m.selected-1)
-		m.syncAnchorToSelected()
+		m.selectEvent(m.selected - 1)
 	case "list.last":
-		m.selected = max(0, len(m.events)-1)
-		m.syncAnchorToSelected()
+		m.selectEvent(len(m.events) - 1)
 	case "detail.down":
 		m.gridDetail++
 		m.clampGridDetail()

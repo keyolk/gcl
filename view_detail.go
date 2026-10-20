@@ -61,6 +61,26 @@ func (m model) viewDayDetail(width, height int) string {
 	return detailStyle.Width(max(28, width)).Height(inner).Render(content)
 }
 
+// dayDetailHeaderRows is the lines above the first event in the day detail:
+// the date title and a blank line.
+const dayDetailHeaderRows = 2
+
+// dayDetailHeights is how many lines each of the day's events takes in the day
+// detail: its row, plus a location line and a room line when it has them.
+func dayDetailHeights(evs []*Event) []int {
+	hs := make([]int, len(evs))
+	for i, ev := range evs {
+		hs[i] = 1
+		if locationWithoutRooms(ev) != "" {
+			hs[i]++
+		}
+		if len(ev.Rooms) > 0 {
+			hs[i]++
+		}
+	}
+	return hs
+}
+
 func (m model) viewDetailCard(width, height int) string {
 	// Grid views: show ALL of the focused day's events, not just one.
 	if m.view != viewList {

@@ -45,6 +45,10 @@ OAuth credentials from `gcalcli` — and builds a richer interactive interface o
 - Keyboard navigation for day/week movement
 - Focus follows selection in list view
 - Grid view keeps the calendar window stable while moving the cursor
+- Mouse, as a supplement to the keys: click selects an event, grid day, day-detail
+  row or active-panel row, and a second click opens it (Enter); the wheel moves the
+  selection three rows (one week over a grid); in help, pickers and confirms a click
+  outside closes them. The mouse never saves or discards a staged time change
 
 ### Overlap timeline (`t`)
 

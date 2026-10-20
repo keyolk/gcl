@@ -30,7 +30,16 @@ func (m model) gridLayout(height int) (weeks, evRows int) {
 	return weeks, evRows
 }
 
-func (m model) viewGrid(width, height int) string {
+// gridGeom is the grid's row structure: which week starts the window, how wide
+// a day cell is, and how many event rows each week gets. viewGrid draws from it
+// and the mouse handler maps a click to a day with it.
+type gridGeom struct {
+	firstWeek time.Time
+	colW      int
+	rowsFor   []int // event rows per week, under that week's date row
+}
+
+func (m model) gridGeometry(width, height int) gridGeom {
 	firstWeek := m.gridTop
 	if firstWeek.IsZero() {
 		firstWeek = weekStart(m.anchor)
@@ -39,7 +48,6 @@ func (m model) viewGrid(width, height int) string {
 		}
 	}
 	colW := max(12, width/7)
-	inner := max(6, colW-1)
 
 	// events grouped by day
 	byDay := map[string][]*Event{}
@@ -74,6 +82,21 @@ func (m model) viewGrid(width, height int) string {
 		give := min(want, budget)
 		rowsFor[w] = give
 		budget -= give
+	}
+	return gridGeom{firstWeek: firstWeek, colW: colW, rowsFor: rowsFor}
+}
+
+func (m model) viewGrid(width, height int) string {
+	g := m.gridGeometry(width, height)
+	firstWeek, colW, rowsFor := g.firstWeek, g.colW, g.rowsFor
+	weeks := len(rowsFor)
+	inner := max(6, colW-1)
+
+	// events grouped by day
+	byDay := map[string][]*Event{}
+	for i := range m.events {
+		k := dayKey(m.viewDate(&m.events[i]))
+		byDay[k] = append(byDay[k], &m.events[i])
 	}
 
 	var out []string

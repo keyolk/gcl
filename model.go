@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/prefs"
 
 	"github.com/keyolk/tuikit/keys"
@@ -251,6 +252,11 @@ type model struct {
 	// read from disk by a Cmd at startup (recentsMsg) and written back by a Cmd
 	// on every pick, so Update never touches the file itself.
 	recents []string
+	// clicks remembers the last mouse press so a second press on the same
+	// target reads as a double click (mouse.go). now is the clock for it; nil
+	// means time.Now, and tests set it to control the double-click window.
+	clicks mouse.Clicks
+	now    func() time.Time
 }
 
 // createState holds the step-by-step new-event form.

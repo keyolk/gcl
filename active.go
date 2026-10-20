@@ -237,13 +237,7 @@ func (m model) viewActivePanel(width, height int) string {
 	idx := max(0, min(m.activeIndex, len(evs)-1))
 	// Scroll the list so the cursor stays visible when more windows are active
 	// than the capped height can show.
-	rows := max(1, height-1)
-	perEvent := 2
-	visible := max(1, rows/perEvent)
-	start := 0
-	if idx >= visible {
-		start = idx - visible + 1
-	}
+	start, visible := activePanelWindow(height, idx)
 	for i := start; i < min(len(evs), start+visible); i++ {
 		ev := evs[i]
 		// The countdown leads the row: "which of these lapses first" is the
@@ -272,6 +266,22 @@ func (m model) viewActivePanel(width, height int) string {
 		lines = append(lines, mutedStyle.Render(fmt.Sprintf("    ~ +%d more active", rest)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// activePanelRowsPerEvent is the lines one event takes in the panel: the
+// countdown row and the span row.
+const activePanelRowsPerEvent = 2
+
+// activePanelWindow is which events the panel of the given height shows: the
+// first one drawn and how many fit, scrolled so the cursor idx stays visible.
+// viewActivePanel draws from it and the mouse handler hit-tests with it.
+func activePanelWindow(height, idx int) (start, visible int) {
+	rows := max(1, height-1)
+	visible = max(1, rows/activePanelRowsPerEvent)
+	if idx >= visible {
+		start = idx - visible + 1
+	}
+	return start, visible
 }
 
 // activeWhere is the event's location/room, falling back to its calendar — the
