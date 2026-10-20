@@ -158,6 +158,13 @@ func (m *model) syncAnchorToSelected() {
 	}
 }
 
+// selectEvent moves the agenda selection to event i (clamped) and carries the
+// focus date with it. The list keys and the mouse both select through here.
+func (m *model) selectEvent(i int) {
+	m.selected = max(0, min(i, len(m.events)-1))
+	m.syncAnchorToSelected()
+}
+
 func (m model) firstEventIndexOnOrAfter(day time.Time) int {
 	for i := range m.events {
 		if !m.viewDate(&m.events[i]).Before(day) {

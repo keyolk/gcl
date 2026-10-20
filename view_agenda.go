@@ -25,10 +25,19 @@ func (m model) viewScheduleCards(width, height int) string {
 // fit on screen. Each row costs 1 line; day headers cost 1. A viewport keeps
 // the selected event visible.
 func (m model) viewAgendaCards(width, height int) string {
+	lines, _ := m.agendaLines(width, height)
+	return strings.Join(lines, "\n")
+}
+
+// agendaLines is the agenda as drawn, one entry per screen row, plus owner:
+// the index into m.events each row shows, or -1 for a day header, ruler, "now"
+// divider or "~ more" row. The mouse handler maps a clicked row to an event
+// through owner, so it reads the very rows View draws rather than recounting
+// the headers.
+func (m model) agendaLines(width, height int) (lines []string, owner []int) {
 	if height <= 0 {
-		return ""
+		return nil, nil
 	}
-	var lines []string
 	innerWidth := max(20, width-1)
 	// The mini timeline only appears when the pane can spare the columns; below
 	// that the agenda falls back to exactly what it rendered before.
@@ -56,10 +65,15 @@ func (m model) viewAgendaCards(width, height int) string {
 		if len(lines) >= height {
 			if height > 0 {
 				lines[height-1] = mutedStyle.Render("  ~ more")
+				owner[height-1] = -1
 			}
 			return true
 		}
 		return false
+	}
+	add := func(line string, event int) {
+		lines = append(lines, line)
+		owner = append(owner, event)
 	}
 	// The "now" divider marks the boundary between past and upcoming events. It
 	// is only meaningful when that boundary actually falls within the rendered
@@ -74,7 +88,7 @@ func (m model) viewAgendaCards(width, height int) string {
 			if truncated() {
 				break
 			}
-			lines = append(lines, nowLine())
+			add(nowLine(), -1)
 			nowShown = true
 		}
 		// Rows group by the day the event falls on IN THE DISPLAY TIMEZONE, so
@@ -92,23 +106,23 @@ func (m model) viewAgendaCards(width, height int) string {
 			if sameDay(evDay, m.viewToday()) {
 				hdr = " * " + day + "  (today)"
 			}
-			lines = append(lines, dayHeaderStyle.Render(hdr))
+			add(dayHeaderStyle.Render(hdr), -1)
 			// The density ruler belongs directly under its date header: it is
 			// the axis every bar below it is read against.
 			if cols > 0 {
 				if truncated() {
 					break
 				}
-				lines = append(lines, m.timelineRuler(evDay, buckets[dayKey(evDay)], innerWidth, cols, peak))
+				add(m.timelineRuler(evDay, buckets[dayKey(evDay)], innerWidth, cols, peak), -1)
 			}
 		}
 		if truncated() {
 			break
 		}
-		lines = append(lines, m.eventRow(ev, selected == ev, innerWidth, dayStart, cols))
+		add(m.eventRow(ev, selected == ev, innerWidth, dayStart, cols), i)
 		prevPast = eventSortInstant(ev).Before(now)
 	}
-	return strings.Join(lines, "\n")
+	return lines, owner
 }
 
 // locationWithoutRooms returns the event location with any comma-separated parts

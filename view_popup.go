@@ -68,6 +68,40 @@ func (m model) popupSize(wantRows int) (int, int) {
 	return w, h
 }
 
+// popupListRows is how many list rows a search/picker popup with n entries
+// shows: the popup height minus title, input, hint and borders.
+func (m model) popupListRows(n int) int {
+	_, h := m.popupSize(n)
+	return max(1, h-4)
+}
+
+// popupInput is the query line of a search or picker popup. The selected
+// style draws a border, so it is three terminal rows, not one.
+func popupInput(prompt, text string, inner int) string {
+	return selectedStyle.Width(inner).Render(prompt + text + "|")
+}
+
+// popupEntry is one entry of a search or picker popup. The selected entry is a
+// bordered box (taller than the others, and it wraps a label that is too
+// long), so the mouse handler measures entries with this rather than assuming
+// one row each.
+func popupEntry(label string, selected bool, inner int) string {
+	line := truncate(label, inner-2)
+	if selected {
+		return selectedStyle.Width(inner - 2).Render(line)
+	}
+	return "  " + line
+}
+
+// popupListStart is the first entry drawn when the cursor is at idx: the list
+// scrolls just far enough to keep the cursor on the last row.
+func popupListStart(idx, rows int) int {
+	if idx >= rows {
+		return idx - rows + 1
+	}
+	return 0
+}
+
 func (m model) viewPopup() string {
 	if m.mode == modeHelp || m.mode == modeFormHelp {
 		w, h := m.helpSize()
@@ -93,21 +127,13 @@ func (m model) viewPopup() string {
 		rows := max(1, h-4)
 		var lines []string
 		lines = append(lines, sectionTitleStyle.Render(" Search "))
-		lines = append(lines, selectedStyle.Width(inner).Render("/ "+m.input+"|"))
+		lines = append(lines, popupInput("/ ", m.input, inner))
 		if len(matches) == 0 {
 			lines = append(lines, mutedStyle.Render("No matches"))
 		} else {
-			start := 0
-			if m.searchIndex >= rows {
-				start = m.searchIndex - rows + 1
-			}
+			start := popupListStart(m.searchIndex, rows)
 			for i := start; i < min(len(matches), start+rows); i++ {
-				line := truncate(matches[i].label, inner-2)
-				if i == m.searchIndex {
-					lines = append(lines, selectedStyle.Width(inner-2).Render(line))
-				} else {
-					lines = append(lines, "  "+line)
-				}
+				lines = append(lines, popupEntry(matches[i].label, i == m.searchIndex, inner))
 			}
 		}
 		lines = append(lines, m.keyHint(inner, ctxSearch))
@@ -121,7 +147,7 @@ func (m model) viewPopup() string {
 	rows := max(1, h-4)
 	var lines []string
 	lines = append(lines, sectionTitleStyle.Render(" "+m.picker.title+" "))
-	lines = append(lines, selectedStyle.Width(inner).Render("› "+m.input+"|"))
+	lines = append(lines, popupInput("› ", m.input, inner))
 	if len(items) == 0 {
 		if m.mode == modeCalendarPicker && strings.Contains(m.input, "@") {
 			lines = append(lines, linkStyle.Render("↵ open this calendar directly: "+truncate(strings.TrimSpace(m.input), inner-4)))
@@ -130,17 +156,9 @@ func (m model) viewPopup() string {
 		}
 	} else {
 		idx := max(0, min(m.picker.index, len(items)-1))
-		start := 0
-		if idx >= rows {
-			start = idx - rows + 1
-		}
+		start := popupListStart(idx, rows)
 		for i := start; i < min(len(items), start+rows); i++ {
-			line := truncate(items[i].label, inner-2)
-			if i == idx {
-				lines = append(lines, selectedStyle.Width(inner-2).Render(line))
-			} else {
-				lines = append(lines, "  "+line)
-			}
+			lines = append(lines, popupEntry(items[i].label, i == idx, inner))
 		}
 	}
 	lines = append(lines, m.keyHint(inner, ctxPicker))

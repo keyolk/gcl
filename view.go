@@ -98,31 +98,18 @@ func (m model) View() string {
 	headerLine := topBarStyle.Width(headerWidth).Render(ansiTruncateTail(headerContent, max(1, headerWidth-2)))
 
 	// The frame is header (1) + body + status (1) + hint (1); body must therefore
-	// be height-3 rows so the whole thing fills exactly m.height. Each toast
-	// beyond the first takes one more row from the body (see statusRows).
-	contentHeight := max(4, m.height-2-m.statusRows())
-	bodyWidth := max(20, m.width-2)
-	// The docked active panel takes rows off the TOP of the body: "what is in
-	// effect now" belongs above "what is coming", and a top dock keeps the
-	// schedule's own scroll position undisturbed when the panel toggles.
-	activeH := m.activePanelHeight(contentHeight)
-	scheduleHeight := max(3, contentHeight-activeH)
-	// The overlay legend is the only thing that maps a dot color to a person,
-	// so it costs a permanent row while an overlay is on — dots without a key
-	// are decoration.
-	legendH := 0
-	if m.overlay.on() && !m.loading {
-		legendH = 1
-		scheduleHeight = max(3, scheduleHeight-1)
-	}
+	// be height-3 rows so the whole thing fills exactly m.height. The pane sizes
+	// come from paneLayout, the same numbers the mouse handler hit-tests with.
+	l := m.paneLayout()
+	contentHeight, bodyWidth, activeH, scheduleHeight, legendH := l.contentH, l.bodyW, l.activeH, l.scheduleH, l.legendH
 	var body string
 	// Only an agenda that has never loaded is replaced by a placeholder. Once
 	// events are on screen, a reload (nudge, save, move) keeps them and the
 	// header shows a loading pill instead, so the body never flashes empty; a
 	// failed reload likewise keeps them and reports in the status line.
-	if m.loading && !m.hasLoaded() {
+	if m.bodyIsPlaceholder() && m.loading {
 		body = cardStyle.Width(max(20, bodyWidth-4)).Render("loading calendar events~")
-	} else if m.err != nil && !m.hasLoaded() {
+	} else if m.bodyIsPlaceholder() {
 		body = errorStyle.Render(wrap(m.err.Error(), bodyWidth))
 	} else {
 		// The schedule (list agenda or grid) plus a detail pane. The detail pane
@@ -133,21 +120,17 @@ func (m model) View() string {
 			}
 			return m.viewGrid(w, h)
 		}
-		switch m.splitMode() {
+		switch l.split {
 		case splitRight:
-			rightW := max(34, bodyWidth/3)
-			leftW := m.schedulePaneWidth()
-			left := fitPane(schedule(leftW, scheduleHeight), leftW, scheduleHeight)
-			right := fitPane(m.viewDetailCard(rightW, scheduleHeight), rightW, scheduleHeight)
+			left := fitPane(schedule(l.schedule.W, l.schedule.H), l.schedule.W, l.schedule.H)
+			right := fitPane(m.viewDetailCard(l.detail.W, l.detail.H), l.detail.W, l.detail.H)
 			body = lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
 		case splitBottom:
-			detailH := max(6, scheduleHeight/3)
-			topH := max(4, scheduleHeight-detailH)
-			top := fitPane(schedule(bodyWidth, topH), bodyWidth, topH)
-			bottom := fitPane(m.viewDetailCard(bodyWidth, detailH), bodyWidth, detailH)
+			top := fitPane(schedule(l.schedule.W, l.schedule.H), l.schedule.W, l.schedule.H)
+			bottom := fitPane(m.viewDetailCard(l.detail.W, l.detail.H), l.detail.W, l.detail.H)
 			body = top + "\n" + bottom
 		default: // no split - too small for a detail pane
-			body = schedule(bodyWidth, scheduleHeight)
+			body = schedule(l.schedule.W, l.schedule.H)
 		}
 		if activeH > 0 {
 			panel := fitPane(m.viewActivePanel(bodyWidth, activeH), bodyWidth, activeH)
@@ -162,16 +145,8 @@ func (m model) View() string {
 	body = clampToHeight(body, contentHeight)
 
 	// Modal overlays (create/edit, delete, pickers) still float bottom-right.
-	if m.mode == modeCreate {
-		body = overlayBottomRight(body, m.viewCreate(), bodyWidth, contentHeight)
-	} else if m.mode == modeFindTime {
-		body = overlayBottomRight(body, m.viewFindTime(), bodyWidth, contentHeight)
-	} else if m.mode == modeOverlayPicker {
-		body = overlayBottomRight(body, m.viewOverlayPicker(), bodyWidth, contentHeight)
-	} else if m.mode == modeConfirmDelete {
-		body = overlayBottomRight(body, m.viewConfirmDelete(), bodyWidth, contentHeight)
-	} else if m.mode != modeNormal {
-		body = overlayBottomRight(body, m.viewPopup(), bodyWidth, contentHeight)
+	if modal := m.modalView(); modal != "" {
+		body = overlayBottomRight(body, modal, bodyWidth, contentHeight)
 	}
 
 	statusLine := m.statusView()
