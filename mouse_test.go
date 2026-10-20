@@ -191,6 +191,29 @@ func TestSlowSecondClickIsNotADoubleClick(t *testing.T) {
 	}
 }
 
+// A key between two clicks breaks the pair. Click an event, j, k back to it,
+// click again inside the double-click window: that is a fresh first click,
+// so it selects and must not open.
+func TestKeyBetweenClicksBreaksTheDoubleClick(t *testing.T) {
+	m := threeEvents(t, 120, 40)
+	x, y := at(t, m, "Bravo review")
+	m, _ = press(m, x, y)
+	for _, k := range []string{"j", "k"} {
+		next, _ := m.Update(keyMsg(k))
+		m = next.(model)
+	}
+	if m.selected != 1 {
+		t.Fatalf("selected = %d after j, k; want back on 1 (Bravo)", m.selected)
+	}
+	m, _ = press(m, x, y)
+	if got := toastText(m); strings.Contains(got, "Google Calendar link") {
+		t.Errorf("a key between the clicks must break the double click; open ran: %q", got)
+	}
+	if m.selected != 1 {
+		t.Errorf("selected = %d, want 1 (Bravo) still selected", m.selected)
+	}
+}
+
 func TestClickOnDayHeaderDoesNothing(t *testing.T) {
 	m := threeEvents(t, 120, 40)
 	m.selected = 1

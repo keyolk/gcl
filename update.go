@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/prefs"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -311,6 +312,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		return m, m.reload()
 	case tea.KeyMsg:
+		// A key between two clicks breaks the pair: click, move away and back
+		// by keyboard, click again must not count as a double click.
+		m.clicks = mouse.Clicks{}
 		return m.handleKey(msg)
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
