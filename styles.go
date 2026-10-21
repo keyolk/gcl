@@ -83,6 +83,7 @@ var (
 	sectionTitleStyle lipgloss.Style
 	selectedStyle     lipgloss.Style
 	cardStyle         lipgloss.Style
+	dividerStyle      lipgloss.Style // the schedule | detail split's divider
 	// detailStyle intentionally uses NO border of any kind: many terminals treat
 	// box-drawing and other ambiguous-width glyphs as double-width, which desyncs
 	// the frame and clips the bottom edge. Plain-space padding (always width 1)
@@ -172,6 +173,7 @@ func applyTheme(th theme.Theme) {
 		selectedStyle = selectedStyle.Background(p.Selected)
 	}
 	cardStyle = border(r.NewStyle(), p.Border).Padding(0, 1)
+	dividerStyle = fg(r.NewStyle(), p.Border)
 	detailStyle = r.NewStyle().PaddingLeft(2).PaddingRight(1)
 	modalStyle = border(r.NewStyle(), p.Accent).Padding(0, 1)
 	pillStyle = fill(pill, p.BarFg, p.PillBg)

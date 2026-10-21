@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/prefs"
+	"github.com/keyolk/tuikit/split"
 )
 
 // UI state that survives a restart (engine principle E12), in
@@ -27,6 +28,9 @@ type uiState struct {
 	JumpUnit       string   `json:"jump_unit"` // day | week | month
 	TimelineHidden bool     `json:"timeline_hidden"`
 	Overlay        []string `json:"overlay,omitempty"` // calendars merged into the agenda
+	// The schedule | detail ratio, one per orientation (panesplit.go).
+	SplitRight  split.State `json:"split_right"`
+	SplitBottom split.State `json:"split_bottom"`
 }
 
 var viewNames = map[viewMode]string{viewList: "list", viewWeek: "week", viewMonth: "month"}
@@ -37,12 +41,15 @@ func (m model) uiState() uiState {
 		JumpUnit:       m.jumpUnit,
 		TimelineHidden: m.timelineHidden,
 		Overlay:        slices.Clone(m.overlay.active),
+		SplitRight:     m.paneSplit(splitRight).State(),
+		SplitBottom:    m.paneSplit(splitBottom).State(),
 	}
 }
 
 func (s uiState) equal(o uiState) bool {
 	return s.View == o.View && s.JumpUnit == o.JumpUnit &&
-		s.TimelineHidden == o.TimelineHidden && slices.Equal(s.Overlay, o.Overlay)
+		s.TimelineHidden == o.TimelineHidden && slices.Equal(s.Overlay, o.Overlay) &&
+		s.SplitRight == o.SplitRight && s.SplitBottom == o.SplitBottom
 }
 
 // defaultUIState is the state of a first run, from the config.
@@ -72,6 +79,10 @@ func (s uiState) apply(m *model) {
 			cals = append(cals, c)
 		}
 	}
+	// Restore rejects a ratio that is not a fraction (a missing field, a
+	// percentage, NaN), keeping the default.
+	m.splitRight, _ = m.paneSplit(splitRight).Restore(s.SplitRight)
+	m.splitBottom, _ = m.paneSplit(splitBottom).Restore(s.SplitBottom)
 	// More calendars than colors cannot be told apart; the picker refuses that
 	// too (runOverlay), so such a file was not written by gcl.
 	if len(cals) > 0 && len(cals) <= len(overlayColors) {

@@ -321,7 +321,15 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// engine; cleared here, not in handleKey, for the same reason.
 		m.textSel.Clear()
 		return m.handleKey(msg)
-	case tea.MouseMsg, selection.AutoScrollMsg:
+	case tea.MouseMsg:
+		// The split first: a divider press is a resize, never a selection
+		// or a click on the pane next to it.
+		nm, consumed := m.splitMouse(msg)
+		if consumed {
+			return nm, nil
+		}
+		return nm.selectionUpdate(msg)
+	case selection.AutoScrollMsg:
 		return m.selectionUpdate(msg)
 	case selection.CopiedMsg:
 		return m.copied(msg)

@@ -152,6 +152,9 @@ func (m model) run(action string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case m.mode == modeHelp:
 		return m.runHelp(action)
 	}
+	if isSplitAction(action) {
+		return m.runSplit(action)
+	}
 	if mm, cmd, ok := m.runQuick(action); ok {
 		return mm, cmd
 	}

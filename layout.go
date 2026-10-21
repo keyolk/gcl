@@ -19,6 +19,8 @@ type paneLayout struct {
 	scheduleH       int // rows left for the schedule (and its detail pane)
 	legendH         int // the overlay legend row under the schedule
 	split           splitKind
+	splitArea       mouse.Rect // the schedule and detail panes together, as the split cuts it
+	divider         mouse.Rect // the split's divider; zero when there is none
 	active          mouse.Rect // the docked active-now panel; zero when closed
 	schedule        mouse.Rect // the list agenda or grid
 	detail          mouse.Rect // the detail pane; zero when there is none
@@ -47,20 +49,14 @@ func (m model) paneLayout() paneLayout {
 	}
 	// The schedule and detail panes. The detail pane splits to the RIGHT on
 	// wide panes and to the BOTTOM on tall/narrow ones.
-	switch l.split {
-	case splitRight:
-		rightW := max(34, l.bodyW/3)
-		leftW := m.schedulePaneWidth()
-		l.schedule = mouse.Rect{X: 0, Y: top, W: leftW, H: l.scheduleH}
-		l.detail = mouse.Rect{X: leftW + 1, Y: top, W: rightW, H: l.scheduleH}
-	case splitBottom:
-		detailH := max(6, l.scheduleH/3)
-		topH := max(4, l.scheduleH-detailH)
-		l.schedule = mouse.Rect{X: 0, Y: top, W: l.bodyW, H: topH}
-		l.detail = mouse.Rect{X: 0, Y: top + topH, W: l.bodyW, H: detailH}
-	default:
-		l.schedule = mouse.Rect{X: 0, Y: top, W: l.bodyW, H: l.scheduleH}
+	// The boundary between them is the split's (panesplit.go): View draws
+	// these rects and the mouse, selection and resize keys use the same ones.
+	l.splitArea = mouse.Rect{X: 0, Y: top, W: l.bodyW, H: l.scheduleH}
+	if l.split == splitNone {
+		l.schedule = l.splitArea
+		return l
 	}
+	l.schedule, l.divider, l.detail = m.paneSplit(l.split).Layout(l.splitArea)
 	return l
 }
 

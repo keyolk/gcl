@@ -9,6 +9,7 @@ import (
 	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/prefs"
 	"github.com/keyolk/tuikit/selection"
+	"github.com/keyolk/tuikit/split"
 
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/toast"
@@ -201,22 +202,25 @@ type model struct {
 	helpOff     int         // first line shown on the help page (clamped by RenderHelp)
 	// saver writes uiState (uistate.go). Only main gives it an app name: the
 	// zero Saver of a model literal (every test) writes nothing.
-	saver       prefs.Saver[uiState]
-	err         error
-	width       int
-	height      int
-	mode        inputMode
-	input       string
-	searchIndex int
-	picker      pickerState
-	tzIndex     int
-	create      createState
-	jumpUnit    string    // list view h/l step: "day" | "week" | "month"
-	gridTop     time.Time // grid view: first visible week (Sunday); stable while navigating
-	focusPane   paneFocus // grid: whether navigation targets calendar or right/bottom detail pane
-	gridDetail  int       // grid detail selection within the focused day
-	nextReqID   int       // monotonically increasing fetch request id
-	inflightReq int       // last fetch request id actually issued
+	saver prefs.Saver[uiState]
+	// splitRight and splitBottom are the schedule | detail boundary for each
+	// orientation (panesplit.go). Zero values lay out at the default ratio.
+	splitRight, splitBottom split.Model
+	err                     error
+	width                   int
+	height                  int
+	mode                    inputMode
+	input                   string
+	searchIndex             int
+	picker                  pickerState
+	tzIndex                 int
+	create                  createState
+	jumpUnit                string    // list view h/l step: "day" | "week" | "month"
+	gridTop                 time.Time // grid view: first visible week (Sunday); stable while navigating
+	focusPane               paneFocus // grid: whether navigation targets calendar or right/bottom detail pane
+	gridDetail              int       // grid detail selection within the focused day
+	nextReqID               int       // monotonically increasing fetch request id
+	inflightReq             int       // last fetch request id actually issued
 	// lastUndo holds a single level of undo for the most recent
 	// create/patch/delete, so a mistyped submit or accidental delete can be
 	// reversed with `u` without leaving the TUI.
