@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/keyolk/tuikit/render"
+	"github.com/keyolk/tuikit/selection"
 )
 
 type splitKind int
@@ -60,7 +61,14 @@ func (m model) schedulePaneWidth() int {
 	return bodyWidth
 }
 
+// View draws the frame with the drag selection's highlight on top.
 func (m model) View() string {
+	return m.textSel.Render(m.frame(), m.selPanes(), selection.DefaultStyle())
+}
+
+// frame is View without the selection highlight: the selection reads it to
+// copy panes that have no Lines, and the highlight must not be copied along.
+func (m model) frame() string {
 	if m.width <= 0 {
 		return "loading~"
 	}
@@ -166,7 +174,7 @@ func (m model) View() string {
 	b.WriteString(statusLine)
 	b.WriteByte('\n')
 	b.WriteString(hintLine)
-	return m.textSel.Render(b.String(), m.selPanes(), selectionStyle())
+	return b.String()
 }
 
 // clampToHeight makes s occupy exactly n rows: extra rows are dropped, missing

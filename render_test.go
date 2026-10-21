@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 	"time"
 )
 
@@ -161,10 +163,14 @@ func TestFrameFitsAtEverySize(t *testing.T) {
 			width: w, height: h, view: view, anchor: today(), jumpUnit: "day",
 			calendar: "me", activeOpen: open, gridTop: weekStart(today()),
 			events: []Event{
-				{ID: "w", Title: "apne2 maintenance window",
+				// Linked titles and links: OSC 8 carries the URL but takes no
+				// cells, so a linked row must fit exactly like a plain one.
+				{ID: "w", Title: "apne2 maintenance window", HTMLLink: "https://calendar.google.com/calendar/event?eid=w",
 					StartDate: today().AddDate(0, 0, -2), EndDate: today().AddDate(0, 0, 2)},
 				{ID: "r", Title: "istiod upgrade", StartAt: now.Add(-20 * time.Minute), EndAt: now.Add(40 * time.Minute),
-					StartDate: today(), StartTime: "10:50", EndTime: "11:50", Location: "ops-apne2"},
+					StartDate: today(), StartTime: "10:50", EndTime: "11:50", Location: "ops-apne2",
+					HTMLLink: "https://calendar.google.com/calendar/event?eid=r",
+					Links:    []string{"https://meet.google.com/abc-defg-hij?authuser=0&pli=1&a-very-long-query-that-gets-truncated"}},
 			},
 		}
 	}
@@ -177,7 +183,10 @@ func TestFrameFitsAtEverySize(t *testing.T) {
 					if rows := strings.Count(out, "\n") + 1; rows != h {
 						t.Errorf("%dx%d view=%d panel=%v: %d rows, want %d", w, h, view, open, rows, h)
 					}
-					for i, l := range strings.Split(stripANSI(out), "\n") {
+					if view == viewList && !strings.Contains(out, "\x1b]8;;https://calendar.google.com/calendar/event?eid=r\x1b\\") {
+						t.Errorf("%dx%d panel=%v: the linked title is not drawn as a link", w, h, open)
+					}
+					for i, l := range strings.Split(ansi.Strip(out), "\n") {
 						if n := len([]rune(l)); n > w {
 							t.Errorf("%dx%d view=%d panel=%v: line %d is %d cols", w, h, view, open, i, n)
 						}

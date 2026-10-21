@@ -12,6 +12,7 @@ import (
 	"github.com/keyolk/tuikit/selection"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/link"
 	"github.com/keyolk/tuikit/toast"
 )
 
@@ -320,10 +321,12 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// engine; cleared here, not in handleKey, for the same reason.
 		m.textSel.Clear()
 		return m.handleKey(msg)
-	case tea.MouseMsg:
-		return m.selectionMouse(msg)
+	case tea.MouseMsg, selection.AutoScrollMsg:
+		return m.selectionUpdate(msg)
 	case selection.CopiedMsg:
 		return m.copied(msg)
+	case link.OpenedMsg:
+		return m.opened(msg)
 	}
 	return m, nil
 }

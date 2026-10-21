@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os/exec"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -34,19 +33,6 @@ func (m model) loadCmd(reqID int) tea.Cmd {
 	return func() tea.Msg {
 		events, err := fetchEvents(calendar, start, end)
 		return eventsMsg{events: events, err: err, start: start, end: end, reqID: reqID}
-	}
-}
-
-func openCmd(link string) tea.Cmd {
-	return func() tea.Msg {
-		opener := "xdg-open"
-		if runtime.GOOS == "darwin" {
-			opener = "open"
-		}
-		if err := exec.Command(opener, link).Start(); err != nil {
-			return actionFailedMsg("open failed: " + err.Error())
-		}
-		return statusMsg("opened: " + link)
 	}
 }
 

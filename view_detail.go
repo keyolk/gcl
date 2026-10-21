@@ -42,12 +42,13 @@ func (m model) viewDayDetail(width, height int) string {
 		if ev.otherLinkCount() > 0 {
 			badges += " >"
 		}
-		line := pillStyle.Render(tm) + " " + truncate(ev.Title, max(6, iw-lipgloss.Width(tm)-lipgloss.Width(badges)-2)) + mutedStyle.Render(badges)
+		u := ev.eventLink()
+		line := pillStyle.Render(tm) + " " + linkSpan(u, truncate(ev.Title, max(6, iw-lipgloss.Width(tm)-lipgloss.Width(badges)-2)), "", "") + mutedStyle.Render(badges)
 		if m.focusPane == focusDetail && i == max(0, min(m.gridDetail, len(evs)-1)) {
-			line = selectedRowStyle.Render(truncate("▸ "+tm+" "+ev.Title+badges, iw))
+			line = selectedRowStyle.Render(linkSpan(u, truncate("▸ "+tm+" "+ev.Title+badges, iw), "▸ "+tm+" ", badges))
 		}
 		if pending != nil {
-			line = pendingStyle.Render(truncate(tm+" "+ev.Title+badges, iw))
+			line = pendingStyle.Render(linkSpan(u, truncate(tm+" "+ev.Title+badges, iw), tm+" ", badges))
 		}
 		lines = append(lines, line)
 		if loc := locationWithoutRooms(ev); loc != "" {
@@ -91,7 +92,7 @@ func (m model) viewDetailCard(width, height int) string {
 		return detailStyle.Width(max(28, width)).Height(max(3, height)).Render("No event selected")
 	}
 	var lines []string
-	lines = append(lines, sectionTitleStyle.Render(truncate("  "+ev.Title+"  ", max(10, width-4))))
+	lines = append(lines, sectionTitleStyle.Render(linkSpan(ev.eventLink(), truncate("  "+ev.Title+"  ", max(10, width-4)), "  ", "  ")))
 	lines = append(lines, "")
 	lines = append(lines, pillStyle.Render(m.viewDate(ev).Format("Mon Jan 02"))+" "+pillStyle.Render(m.timeLabel(ev)))
 	// A staged change spells out saved → staged in full here, since the row can
@@ -154,7 +155,8 @@ func (m model) viewDetailCard(width, height int) string {
 				lines = append(lines, mutedStyle.Render("~ more links"))
 				break
 			}
-			lines = append(lines, linkStyle.Render(fmt.Sprintf("%d. %s", i+1, truncate(link, max(10, width-7)))))
+			// The row is cut to the card, so the full URL rides on the link.
+			lines = append(lines, linkStyle.Render(fmt.Sprintf("%d. %s", i+1, linkSpan(link, truncate(link, max(10, width-7)), "", ""))))
 		}
 	}
 	content := strings.Join(lines, "\n")

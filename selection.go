@@ -1,11 +1,8 @@
 package main
 
 import (
-	"fmt"
-	"unicode/utf8"
-
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/selection"
 )
@@ -23,43 +20,36 @@ import (
 //   - an open overlay is the only thing selectable. Its content is a Text
 //     pane; search and picker entries are a List pane on top (second click
 //     chooses). Help is a Text pane with all of its lines, so a drag past its
-//     edge scrolls it through help.down / help.up, as the wheel does.
+//     edge scrolls it, as the wheel does.
 //   - a drag in the form or a query never moves the cursor or edits: the
 //     selection consumes it before the overlay sees anything.
 
-// selectionMouse feeds msg to the selection before the click handler. A press
-// that does not move is left to handleMouse, so click-to-select still works;
-// only what the selection consumed (a drag, its release, a word pick) skips it.
-func (m model) selectionMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	r := m.textSel.Mouse(msg, m.selPanes(), m.View(), m.clock())
-	var cmds []tea.Cmd
-	next := tea.Model(m)
+// selectionUpdate feeds a mouse event or an auto-scroll tick to the selection
+// before the click handler. A press that does not move is left to
+// handleMouse, so click-to-select still works; only what the selection
+// consumed (a drag, its release, a word pick) skips it.
+func (m model) selectionUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
+	r, cmd := m.textSel.Update(msg, m.selPanes, m.frame, m.clock())
 	if r.Scroll != 0 && r.ScrollPane == helpPaneID {
-		var c tea.Cmd
-		if r.Scroll < 0 {
-			next, c = m.runN("help.up", -r.Scroll)
-		} else {
-			next, c = m.runN("help.down", r.Scroll)
-		}
-		cmds = append(cmds, c)
+		// Set, not add: the pane was built from the clamped offset, and a
+		// helpOff left past the end by a resize would swallow a scroll up.
+		m.helpOff = r.Offset
 	}
-	if r.Copy != "" {
-		cmds = append(cmds, selection.Copy(r.Copy))
+	mm, ok := msg.(tea.MouseMsg)
+	if r.Consumed || !ok {
+		return m, cmd
 	}
-	if r.Consumed {
-		return next, tea.Batch(cmds...)
-	}
-	next, cmd := next.(model).handleMouse(msg)
-	return next, tea.Batch(append(cmds, cmd)...)
+	next, c := m.handleMouse(mm)
+	return next, tea.Batch(cmd, c)
 }
 
 // copied reports the clipboard write: a copy is silent otherwise, and a
 // failed one (no pbcopy, no /dev/tty) must not look like a success.
 func (m model) copied(msg selection.CopiedMsg) (tea.Model, tea.Cmd) {
 	if msg.Err != nil {
-		m.fail(srcStatus, "copy failed: "+msg.Err.Error())
+		m.fail(srcStatus, msg.Note())
 	} else {
-		m.say(fmt.Sprintf("copied %d chars", utf8.RuneCountInString(msg.Text)))
+		m.say(msg.Note())
 	}
 	return m, nil
 }
@@ -118,18 +108,18 @@ func (m model) modalPanes(body mouse.Rect) []selection.Pane {
 	return panes
 }
 
-// helpLinesAll is a page height no help reaches: renderHelpPage then returns
-// every line, with no "… N more" marker.
-const helpLinesAll = 1 << 16
-
 // helpPane is the help page inside the modal content c, with every help line.
 // viewPopup draws a title and a blank line above the page, then the page
 // (renderHelpPage from helpOff), so the full list at offset 0 lines up with
 // it row for row.
 func (m model) helpPane(c mouse.Rect) selection.Pane {
 	w, rows := m.helpBodySize()
-	all, _ := m.renderHelpPage(w, helpLinesAll, 0)
-	if len(all)-m.helpOff > rows {
+	secs, st := m.helpSections()
+	all := keys.HelpLines(secs, w, st)
+	// The offset View drew with: RenderHelp clamps helpOff, which a resize
+	// can leave past the end.
+	_, off := m.renderHelpPage(w, rows, m.helpOff)
+	if len(all)-off > rows {
 		// RenderHelp spends the last row on "… N more" while lines remain
 		// below. That row is not a help line, so it is left out: a drag onto
 		// it scrolls instead of selecting the hidden line under the marker.
@@ -137,14 +127,5 @@ func (m model) helpPane(c mouse.Rect) selection.Pane {
 	}
 	const titleRows = 2 // the title and the blank line under it
 	r := clipRect(mouse.Rect{X: c.X, Y: c.Y + titleRows, W: w, H: rows}, c)
-	return selection.Pane{ID: helpPaneID, Rect: r, Kind: selection.Text, Lines: all, Offset: m.helpOff}
-}
-
-// selectionStyle is reverse video on the theme's renderer, which keeps
-// attributes under NO_COLOR, so the selection never disappears there.
-func selectionStyle() lipgloss.Style {
-	if r := ui.Renderer(); r != nil {
-		return r.NewStyle().Reverse(true)
-	}
-	return lipgloss.NewStyle().Reverse(true)
+	return selection.Pane{ID: helpPaneID, Rect: r, Kind: selection.Text, Lines: all, Offset: off}
 }

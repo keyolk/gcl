@@ -108,6 +108,13 @@ func (m model) helpPage() (lines []string, offset int) {
 
 // renderHelpPage lays the open help out in w cells, rows lines from offset.
 func (m model) renderHelpPage(w, rows, offset int) (lines []string, clamped int) {
+	secs, st := m.helpSections()
+	return keys.RenderHelp(secs, w, rows, offset, st)
+}
+
+// helpSections is the open help's content and style, shared by the page View
+// draws and the selection's full line list (keys.HelpLines).
+func (m model) helpSections() ([]keys.Section, keys.HelpStyle) {
 	o := keys.Opts{State: m.keyState}
 	km := m.keymap()
 	var secs, notes []keys.Section
@@ -120,7 +127,7 @@ func (m model) renderHelpPage(w, rows, offset int) (lines []string, clamped int)
 	st := ui.HelpStyle()
 	st.Names = helpNames
 	st.Ellipsis = cutMarker
-	return keys.RenderHelp(append(secs, notes...), w, rows, offset, st)
+	return append(secs, notes...), st
 }
 
 // helpOrder is the order sections are read in. Help orders them by where the

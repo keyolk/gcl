@@ -246,15 +246,17 @@ func (m model) viewActivePanel(width, height int) string {
 		remaining := remainingLabel(ev, now)
 		title := truncate(ev.Title, max(10, inner-lipgloss.Width(remaining)-8))
 		row := remaining + "  ·  " + title
+		// Only the title is the link: the countdown is the panel's own text.
+		row = linkSpan(ev.eventLink(), truncate(row, inner-2), remaining+"  ·  ", "")
 		switch {
 		case focused && i == idx:
-			lines = append(lines, selectedRowStyle.Render("▸ "+truncate(row, inner-2)))
+			lines = append(lines, selectedRowStyle.Render("▸ "+row))
 		case i == idx:
 			// Cursor position is still shown while unfocused (dimmed), so
 			// tabbing in doesn't feel like it jumps somewhere unexpected.
-			lines = append(lines, mutedStyle.Render("▸ "+truncate(row, inner-2)))
+			lines = append(lines, mutedStyle.Render("▸ "+row))
 		default:
-			lines = append(lines, "  "+truncate(row, inner-2))
+			lines = append(lines, "  "+row)
 		}
 		meta := m.activeSpanLabel(ev)
 		if where := activeWhere(ev); where != "" {

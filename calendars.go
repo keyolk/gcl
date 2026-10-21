@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/link"
 )
 
 func (m model) choosePicker(it pickerItem) (tea.Model, tea.Cmd) {
@@ -13,7 +14,7 @@ func (m model) choosePicker(it pickerItem) (tea.Model, tea.Cmd) {
 	case pickerLinks:
 		m.mode = modeNormal
 		m.input = ""
-		return m, openCmd(it.value)
+		return m, link.Open(it.value)
 	case pickerCalendar, pickerAttendee:
 		if it.value == "" {
 			m.say("no calendar id for selection")

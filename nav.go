@@ -1,10 +1,10 @@
 package main
 
 import (
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/link"
 )
 
 // hasLoaded reports whether a fetch has ever landed for the current source, i.e.
@@ -276,14 +276,8 @@ func (m *model) openPrimary() tea.Cmd {
 		m.warn("no event selected")
 		return nil
 	}
-	if ev.HTMLLink != "" {
-		return openCmd(ev.HTMLLink)
-	}
-	// Fall back to any Google Calendar link found among the parsed links.
-	for _, l := range ev.Links {
-		if strings.Contains(l, "google.com/calendar/event") {
-			return openCmd(l)
-		}
+	if u := ev.eventLink(); u != "" {
+		return link.Open(u)
 	}
 	m.warn("no Google Calendar link for this event (use L for other links)")
 	return nil
