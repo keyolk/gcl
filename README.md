@@ -567,7 +567,9 @@ Details worth knowing:
 
 ### Event actions
 
-- `Enter` / `o` — open the Google Calendar event page
+- `Enter` / `o` — open the Google Calendar event page (`o` is the fleet's
+  `link.open` key). Event titles are OSC 8 hyperlinks to the same page, so
+  cmd/ctrl+click opens it too (tmux: `set -as terminal-features '*:hyperlinks'`).
 - `L` — open the link picker (Zoom/docs/etc.)
 - `A` or `p` — open attendee picker and jump to that person's calendar
 - `N` or `c` — create a new event

@@ -326,7 +326,7 @@ func (m model) popupRows(rect mouse.Rect) (area mouse.Rect, start int, heights [
 	}
 	heights = make([]int, min(n, start+rows))
 	for i := start; i < len(heights); i++ {
-		heights[i] = lipgloss.Height(popupEntry(label(i), i == cur, inner))
+		heights[i] = lipgloss.Height(popupEntry(label(i), "", i == cur, inner))
 	}
 	prompt := "› "
 	if m.mode == modeSearch {

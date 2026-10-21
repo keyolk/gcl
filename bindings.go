@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/keyolk/tuikit/keys"
+	"github.com/keyolk/tuikit/link"
 )
 
 // The one key table (engine principle E3).
@@ -87,6 +88,14 @@ func b(ctx keys.Ctx, action, group string, ks []string, help string, footer int)
 
 func k(ks ...string) []string { return ks }
 
+// linkBinding is link.Binding placed in the event group, kept off the narrow
+// bar before the core actions (enter already opens the same page).
+func linkBinding(ctx keys.Ctx) keys.Binding {
+	x := link.Binding(ctx)
+	x.Group, x.Footer, x.Help, x.Short = grpEvent, prioExtra, "open the event page (the title's link)", "link"
+	return x
+}
+
 func short(x keys.Binding, s string) keys.Binding      { x.Short = s; return x }
 func group(x keys.Binding, g string) keys.Binding      { x.FooterGroup = g; return x }
 func pinned(x keys.Binding) keys.Binding               { x.Pinned = true; return x }
@@ -148,7 +157,11 @@ func newKeymap() keys.Keymap {
 
 		// The selected event. The grid acts on the focused day's event.
 		short(b(ctxSchedule, "now", grpGeneral, k("n"), "jump to now (the next upcoming event)", prioNav), "now"),
-		short(b(ctxSchedule, "open", grpEvent, k("enter", "o"), "open the event page in Google Calendar", prioAct), "open"),
+		short(b(ctxSchedule, "open", grpEvent, k("enter"), "open the event page in Google Calendar", prioAct), "open"),
+		// o is the fleet's open-link key (link.open). It opens the same event
+		// page enter does; it used to be a second key of "open", and is its
+		// own action now so a fleet-wide link.open override reaches it.
+		linkBinding(ctxSchedule),
 		short(b(ctxSchedule, "edit", grpEvent, k("E"), "edit (confirm shows only what changes)", prioAct), "edit"),
 		short(b(ctxSchedule, "delete", grpEvent, k("X", "x"), "delete (asks first)", prioExtra), "del"),
 		short(b(ctxSchedule, "yank", grpEvent, k("y"), "copy a field of the event (then y/u/s/e/d)", prioExtra), "copy"),
@@ -413,6 +426,8 @@ func (m model) offered(action string) bool {
 	switch action {
 	case "open", "edit", "delete", "yank":
 		return ev != nil
+	case link.Action:
+		return ev != nil && ev.eventLink() != ""
 	case "attendees":
 		return ev != nil && len(ev.Attendees) > 0
 	case "links":

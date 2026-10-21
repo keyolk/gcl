@@ -14,7 +14,7 @@ func (m model) viewConfirmDelete() string {
 	lines = append(lines, errorStyle.Render(" Delete event? "))
 	lines = append(lines, "")
 	if ev != nil {
-		lines = append(lines, pillStyle.Render(m.timeLabel(ev))+" "+truncate(ev.Title, max(10, w-16)))
+		lines = append(lines, pillStyle.Render(m.timeLabel(ev))+" "+linkSpan(ev.eventLink(), truncate(ev.Title, max(10, w-16)), "", ""))
 		// Name the calendar the delete will actually hit, not the one that
 		// happens to be open: in an overlay these differ, and showing your own
 		// name while deleting a colleague's event is exactly backwards.
@@ -85,8 +85,10 @@ func popupInput(prompt, text string, inner int) string {
 // bordered box (taller than the others, and it wraps a label that is too
 // long), so the mouse handler measures entries with this rather than assuming
 // one row each.
-func popupEntry(label string, selected bool, inner int) string {
-	line := truncate(label, inner-2)
+// popupEntry draws one entry; u, when set, makes the label a link to it (a
+// search hit's event page, a link picker's URL, which truncation may cut).
+func popupEntry(label, u string, selected bool, inner int) string {
+	line := linkSpan(u, truncate(label, inner-2), "", "")
 	if selected {
 		return selectedStyle.Width(inner - 2).Render(line)
 	}
@@ -133,7 +135,7 @@ func (m model) viewPopup() string {
 		} else {
 			start := popupListStart(m.searchIndex, rows)
 			for i := start; i < min(len(matches), start+rows); i++ {
-				lines = append(lines, popupEntry(matches[i].label, i == m.searchIndex, inner))
+				lines = append(lines, popupEntry(matches[i].label, m.events[matches[i].eventIndex].eventLink(), i == m.searchIndex, inner))
 			}
 		}
 		lines = append(lines, m.keyHint(inner, ctxSearch))
@@ -158,7 +160,11 @@ func (m model) viewPopup() string {
 		idx := max(0, min(m.picker.index, len(items)-1))
 		start := popupListStart(idx, rows)
 		for i := start; i < min(len(items), start+rows); i++ {
-			lines = append(lines, popupEntry(items[i].label, i == idx, inner))
+			u := ""
+			if m.picker.kind == pickerLinks {
+				u = items[i].value
+			}
+			lines = append(lines, popupEntry(items[i].label, u, i == idx, inner))
 		}
 	}
 	lines = append(lines, m.keyHint(inner, ctxPicker))

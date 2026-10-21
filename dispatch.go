@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/keyolk/tuikit/link"
 	"github.com/keyolk/tuikit/toast"
 )
 
@@ -275,7 +276,7 @@ func (m model) runSchedule(action string) (tea.Model, tea.Cmd) {
 			m.tzIndex = (m.tzIndex + 1) % n
 		}
 		m.say("timezone: " + m.tzLabel())
-	case "open":
+	case "open", link.Action:
 		cmd := m.openPrimary()
 		return m, cmd
 	case "links":

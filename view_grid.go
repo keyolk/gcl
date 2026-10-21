@@ -156,7 +156,7 @@ func (m model) viewGrid(width, height int) string {
 					} else if isActiveAt(ev, time.Now()) {
 						mark = "◉"
 					}
-					txt = " " + truncate(mark+tm+ev.Title, inner-1)
+					txt = " " + linkSpan(ev.eventLink(), truncate(mark+tm+ev.Title, inner-1), mark+tm, "")
 					if mark == "!" {
 						txt = pendingStyle.Render(txt)
 					} else if c := m.overlayColorFor(ev.Calendar); c != "" {

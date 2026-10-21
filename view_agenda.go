@@ -207,7 +207,7 @@ func (m model) eventRow(ev *Event, selected bool, width int, dayStart time.Time,
 			titleRoom = max(6, titleRoom-lipgloss.Width(tag))
 		}
 	}
-	title := truncate(ev.Title, titleRoom)
+	title := linkSpan(ev.eventLink(), truncate(ev.Title, titleRoom), "", "")
 	// text is the styled left part; it is padded and the bar appended after,
 	// because embedding the bar inside a single Render would inject the row
 	// style's reset into the middle of the bar's own escape sequences.
