@@ -103,6 +103,11 @@ var helpNames = keys.Names{}
 // (help.down / help.up), so a held j cannot run the stored offset past the end.
 func (m model) helpPage() (lines []string, offset int) {
 	w, rows := m.helpBodySize()
+	return m.renderHelpPage(w, rows, m.helpOff)
+}
+
+// renderHelpPage lays the open help out in w cells, rows lines from offset.
+func (m model) renderHelpPage(w, rows, offset int) (lines []string, clamped int) {
 	o := keys.Opts{State: m.keyState}
 	km := m.keymap()
 	var secs, notes []keys.Section
@@ -115,7 +120,7 @@ func (m model) helpPage() (lines []string, offset int) {
 	st := ui.HelpStyle()
 	st.Names = helpNames
 	st.Ellipsis = cutMarker
-	return keys.RenderHelp(append(secs, notes...), w, rows, m.helpOff, st)
+	return keys.RenderHelp(append(secs, notes...), w, rows, offset, st)
 }
 
 // helpOrder is the order sections are read in. Help orders them by where the

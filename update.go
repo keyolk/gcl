@@ -9,6 +9,7 @@ import (
 
 	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/prefs"
+	"github.com/keyolk/tuikit/selection"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/keyolk/tuikit/toast"
@@ -315,9 +316,14 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A key between two clicks breaks the pair: click, move away and back
 		// by keyboard, click again must not count as a double click.
 		m.clicks = mouse.Clicks{}
+		// A key is the "next action" that ends a selection, as in the mod
+		// engine; cleared here, not in handleKey, for the same reason.
+		m.textSel.Clear()
 		return m.handleKey(msg)
 	case tea.MouseMsg:
-		return m.handleMouse(msg)
+		return m.selectionMouse(msg)
+	case selection.CopiedMsg:
+		return m.copied(msg)
 	}
 	return m, nil
 }
