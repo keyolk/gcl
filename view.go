@@ -53,12 +53,7 @@ func fitPane(s string, width, height int) string {
 // detail pane takes its share. The `t` toggle reports whether a timeline fits,
 // so it has to ask about the same width the renderer will use.
 func (m model) schedulePaneWidth() int {
-	bodyWidth := max(20, m.width-2)
-	if m.splitMode() == splitRight {
-		rightW := max(34, bodyWidth/3)
-		return max(30, bodyWidth-rightW-1)
-	}
-	return bodyWidth
+	return m.paneLayout().schedule.W
 }
 
 // View draws the frame with the drag selection's highlight on top.
@@ -128,17 +123,21 @@ func (m model) frame() string {
 			}
 			return m.viewGrid(w, h)
 		}
-		switch l.split {
-		case splitRight:
-			left := fitPane(schedule(l.schedule.W, l.schedule.H), l.schedule.W, l.schedule.H)
-			right := fitPane(m.viewDetailCard(l.detail.W, l.detail.H), l.detail.W, l.detail.H)
-			body = lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
-		case splitBottom:
-			top := fitPane(schedule(l.schedule.W, l.schedule.H), l.schedule.W, l.schedule.H)
-			bottom := fitPane(m.viewDetailCard(l.detail.W, l.detail.H), l.detail.W, l.detail.H)
-			body = top + "\n" + bottom
-		default: // no split - too small for a detail pane
+		// Both panes and the divider come from the split's Layout (paneLayout);
+		// Join cuts and pads each to its rect. A pane the split hides (too
+		// small for both) is a zero rect and is not rendered at all.
+		if l.split == splitNone { // too small for a detail pane
 			body = schedule(l.schedule.W, l.schedule.H)
+		} else {
+			var left, right string
+			if l.schedule.W > 0 && l.schedule.H > 0 {
+				left = schedule(l.schedule.W, l.schedule.H)
+			}
+			if l.detail.W > 0 && l.detail.H > 0 {
+				right = m.viewDetailCard(l.detail.W, l.detail.H)
+			}
+			s := m.paneSplit(l.split)
+			body = s.Join(l.splitArea, left, s.DrawDivider(l.divider, dividerStyle), right)
 		}
 		if activeH > 0 {
 			panel := fitPane(m.viewActivePanel(bodyWidth, activeH), bodyWidth, activeH)

@@ -5,6 +5,7 @@ import (
 
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/link"
+	"github.com/keyolk/tuikit/split"
 )
 
 // The one key table (engine principle E3).
@@ -305,6 +306,7 @@ func newKeymap() keys.Keymap {
 		group(b(ctxInvite, "invite.prev", grpInvite, k("shift+tab", "up", "ctrl+p", "ctrl+k"), "previous field", prioNav), "field"),
 		b(ctxInvite, "field.erase", grpInvite, k("backspace", "ctrl+h"), "delete a character", 0),
 	}
+	bs = append(bs, splitBindings()...)
 	bs = append(bs, nudgeBindings(ctxNudge, "move/resize")...)
 	bs = append(bs, nudgeBindings(ctxPending, "keep adjusting")...)
 	return keys.New(bs...)
@@ -448,6 +450,8 @@ func (m model) offered(action string) bool {
 		return m.activeOpen
 	case "timeline":
 		return m.view == viewList
+	case split.ActionGrow, split.ActionShrink, split.ActionReset:
+		return m.paneLayout().splitShown()
 	}
 	return true
 }

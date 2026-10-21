@@ -46,6 +46,10 @@ func (m model) preferredOverlayWidth() int {
 	bodyWidth := max(20, m.width-2)
 	switch m.splitMode() {
 	case splitRight:
+		// The detail pane's width, wherever the split puts the boundary.
+		if w := m.paneLayout().detail.W; w > 0 {
+			return w
+		}
 		return max(34, bodyWidth/3)
 	case splitBottom:
 		return bodyWidth

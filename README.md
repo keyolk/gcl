@@ -49,6 +49,11 @@ OAuth credentials from `gcalcli` — and builds a richer interactive interface o
   row or active-panel row, and a second click opens it (Enter); the wheel moves the
   selection three rows (one week over a grid); in help, pickers and confirms a click
   outside closes them. The mouse never saves or discards a staged time change
+- Resizable schedule | detail split: `[` / `]` move the boundary, `=` resets it;
+  in the side-by-side layout, drag the divider (double-click it to reset). The
+  stacked layout of narrow terminals has no divider row and resizes by key. The
+  ratio of each layout is kept in `~/.local/state/gcl/ui.json`. (`<` `>` stay the
+  staged day moves.)
 
 ### Overlap timeline (`t`)
 
@@ -359,6 +364,7 @@ be the part that scrolls off.
 - `O` — **overlay**: merge several calendars into one agenda
 - `e` — calendar picker
 - `/` — fuzzy search
+- `[` / `]` / `=` — shrink / grow / reset the schedule pane against the detail pane
 
 ### Active now (`a`)
 
