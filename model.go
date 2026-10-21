@@ -8,6 +8,7 @@ import (
 
 	"github.com/keyolk/tuikit/mouse"
 	"github.com/keyolk/tuikit/prefs"
+	"github.com/keyolk/tuikit/selection"
 
 	"github.com/keyolk/tuikit/keys"
 	"github.com/keyolk/tuikit/toast"
@@ -257,6 +258,8 @@ type model struct {
 	// means time.Now, and tests set it to control the double-click window.
 	clicks mouse.Clicks
 	now    func() time.Time
+	// textSel is the drag selection (selection.go).
+	textSel selection.Selection
 }
 
 // createState holds the step-by-step new-event form.

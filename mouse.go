@@ -273,50 +273,18 @@ func (m model) modalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // up/down do; a second click is Enter. Both draw a title and an input line
 // above the entries.
 func (m model) clickPopupRow(rect mouse.Rect, msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	var n, cur int
 	var keyAt func(int) string
 	var choose string
 	if m.mode == modeSearch {
 		matches := m.searchMatches()
-		n, cur, choose = len(matches), m.searchIndex, "search.jump"
+		choose = "search.jump"
 		keyAt = func(i int) string { return "match:" + strconv.Itoa(matches[i].eventIndex) }
 	} else {
 		items := m.picker.filtered(m.input)
-		n, choose = len(items), "picker.choose"
-		cur = max(0, min(m.picker.index, n-1))
+		choose = "picker.choose"
 		keyAt = func(i int) string { return "item:" + items[i].value + "|" + items[i].label }
 	}
-	rows := m.popupListRows(n)
-	w, _ := m.popupSize(n)
-	inner := max(10, w-4)
-	start := popupListStart(cur, rows)
-	// The popup draws a title line and the query box above the entries, and
-	// the selected entry is a taller bordered box: measure what is drawn.
-	label := func(i int) string {
-		if m.mode == modeSearch {
-			return m.searchMatches()[i].label
-		}
-		return m.picker.filtered(m.input)[i].label
-	}
-	heights := make([]int, min(n, start+rows))
-	for i := start; i < len(heights); i++ {
-		heights[i] = lipgloss.Height(popupEntry(label(i), i == cur, inner))
-	}
-	prompt := "› "
-	if m.mode == modeSearch {
-		prompt = "/ "
-	}
-	above := 1 + lipgloss.Height(popupInput(prompt, m.input, inner))
-	rowsH := 0
-	for _, h := range heights {
-		rowsH += h
-	}
-	area := mouse.Rect{
-		X: rect.X + modalStyle.GetBorderLeftSize() + modalStyle.GetPaddingLeft(),
-		Y: rect.Y + modalStyle.GetBorderTopSize() + modalStyle.GetPaddingTop() + above,
-		W: rect.W - modalStyle.GetHorizontalFrameSize(),
-		H: rowsH,
-	}
+	area, start, heights, cur := m.popupRows(rect)
 	hit := mouse.BlockHit(area, start, heights, msg)
 	if !hit.HasItem {
 		return m.noTarget()
@@ -331,6 +299,58 @@ func (m model) clickPopupRow(rect mouse.Rect, msg tea.MouseMsg) (tea.Model, tea.
 		return m.run(choose, tea.KeyMsg{})
 	}
 	return m, nil
+}
+
+// popupRows is where the search or picker popup in rect draws its entries:
+// the area below the title and the query box, the first entry drawn, every
+// entry's height up to the last drawn one, and the cursor.
+func (m model) popupRows(rect mouse.Rect) (area mouse.Rect, start int, heights []int, cur int) {
+	var n int
+	if m.mode == modeSearch {
+		n, cur = len(m.searchMatches()), m.searchIndex
+	} else {
+		n = len(m.picker.filtered(m.input))
+		cur = max(0, min(m.picker.index, n-1))
+	}
+	rows := m.popupListRows(n)
+	w, _ := m.popupSize(n)
+	inner := max(10, w-4)
+	start = popupListStart(cur, rows)
+	// The popup draws a title line and the query box above the entries, and
+	// the selected entry is a taller bordered box: measure what is drawn.
+	label := func(i int) string {
+		if m.mode == modeSearch {
+			return m.searchMatches()[i].label
+		}
+		return m.picker.filtered(m.input)[i].label
+	}
+	heights = make([]int, min(n, start+rows))
+	for i := start; i < len(heights); i++ {
+		heights[i] = lipgloss.Height(popupEntry(label(i), i == cur, inner))
+	}
+	prompt := "› "
+	if m.mode == modeSearch {
+		prompt = "/ "
+	}
+	above := 1 + lipgloss.Height(popupInput(prompt, m.input, inner))
+	rowsH := 0
+	for _, h := range heights {
+		rowsH += h
+	}
+	c := modalContent(rect)
+	area = mouse.Rect{X: c.X, Y: c.Y + above, W: c.W, H: rowsH}
+	return area, start, heights, cur
+}
+
+// modalContent is the part of a modal at rect inside modalStyle's border and
+// padding.
+func modalContent(rect mouse.Rect) mouse.Rect {
+	return mouse.Rect{
+		X: rect.X + modalStyle.GetBorderLeftSize() + modalStyle.GetPaddingLeft(),
+		Y: rect.Y + modalStyle.GetBorderTopSize() + modalStyle.GetPaddingTop(),
+		W: max(0, rect.W-modalStyle.GetHorizontalFrameSize()),
+		H: max(0, rect.H-modalStyle.GetVerticalFrameSize()),
+	}
 }
 
 // noTarget is a click that landed on nothing selectable: it changes nothing,

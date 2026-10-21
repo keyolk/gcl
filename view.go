@@ -166,7 +166,7 @@ func (m model) View() string {
 	b.WriteString(statusLine)
 	b.WriteByte('\n')
 	b.WriteString(hintLine)
-	return b.String()
+	return m.textSel.Render(b.String(), m.selPanes(), selectionStyle())
 }
 
 // clampToHeight makes s occupy exactly n rows: extra rows are dropped, missing
