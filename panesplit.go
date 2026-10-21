@@ -90,6 +90,7 @@ func splitBindings() []keys.Binding {
 	slices.SortFunc(bs, func(a, b keys.Binding) int { return order[a.Action] - order[b.Action] })
 	for i := range bs {
 		bs[i].Keys = []string{remap[bs[i].Action]}
+		bs[i].Group = "Layout" // gcl's help sections are capitalized
 		bs[i].Help = map[string]string{
 			split.ActionShrink: "shrink the schedule (detail pane grows)",
 			split.ActionGrow:   "grow the schedule (detail pane shrinks)",
@@ -147,5 +148,10 @@ func (m model) splitMouse(msg tea.MouseMsg) (model, bool) {
 		return m, false
 	}
 	s, r := m.paneSplit(l.split).Update(msg, l.splitArea)
+	if r.Consumed && mouse.IsLeftPress(msg) {
+		// The selection never sees this press, so it would keep its
+		// highlight over cells the resize is about to move.
+		m.textSel.Clear()
+	}
 	return m.withPaneSplit(l.split, s), r.Consumed
 }

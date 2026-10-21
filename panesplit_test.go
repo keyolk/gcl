@@ -93,6 +93,15 @@ func TestPanePressStillSelectsTextAndDividerPressNever(t *testing.T) {
 	if got := copiedText(sel); !strings.Contains(got, "Alpha") {
 		t.Errorf("a drag in the detail pane copied %q, want the title", got)
 	}
+	if len(highlighted(sel.View())) == 0 {
+		t.Fatal("setup: the copied text is not highlighted")
+	}
+	// A divider press clears that highlight: the selection never sees the
+	// press, and the resize moves the cells it covers.
+	cleared, _ := press(sel, x, y)
+	if len(highlighted(cleared.View())) != 0 || cleared.textSel.Active() {
+		t.Error("a divider press left the old selection on screen")
+	}
 	div, _ := press(m, x, y)
 	div, _ = motion(div, x, y+4)
 	if got := copiedText(div); got != "" {
