@@ -312,6 +312,18 @@ gcl --calendar someone@example.com
 gcl --dump --calendar me --date 2026-07-01
 ```
 
+### 5b. Answer an invitation, find a time (for scripts)
+
+```bash
+gcl rsvp <event id> yes        # yes|no|maybe; -notify=false to not email the organizer
+gcl find -with a@x.com,b@x.com -d 30 -days 7 -n 5
+```
+
+Both print one JSON object. `rsvp` changes only your own reply and sends every
+other guest back as it was (a patch replaces the whole guest list). `find` is
+the TUI's find-a-time: slots with the most people free first, then the
+soonest; `busy` and `unknown` name who is blocked or unreadable.
+
 ### 6. Upcoming event notifications in tmux
 
 ```bash
