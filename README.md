@@ -325,7 +325,16 @@ gcl -json -c team -days 7  # a week of another calendar
 `attendees` (always a list) of `{email, name, response, self, organizer}`.
 `-days` (1..62, default 7) also sets the span of `-dump`.
 
-### 5b. Answer an invitation, find a time (for scripts)
+### 6. Upcoming event notifications in tmux
+
+```bash
+gcl --notify --calendar me --notify-window 15
+```
+
+If you are inside tmux, this sends `tmux display-message` notifications for
+upcoming events in the given window.
+
+### 7. Answer an invitation, find a time (for scripts)
 
 ```bash
 gcl rsvp <event id> yes        # yes|no|maybe; -notify=false to not email the organizer
@@ -336,15 +345,6 @@ Both print one JSON object. `rsvp` changes only your own reply and sends every
 other guest back as it was (a patch replaces the whole guest list). `find` is
 the TUI's find-a-time: slots with the most people free first, then the
 soonest; `busy` and `unknown` name who is blocked or unreadable.
-
-### 6. Upcoming event notifications in tmux
-
-```bash
-gcl --notify --calendar me --notify-window 15
-```
-
-If you are inside tmux, this sends `tmux display-message` notifications for
-upcoming events in the given window.
 
 ## Keyboard guide
 
