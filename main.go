@@ -20,6 +20,8 @@ func main() {
 	calendarShort := flag.String("c", "", "calendar alias/email/name")
 	dateFlag := flag.String("date", "", "anchor date YYYY-MM-DD")
 	dumpFlag := flag.Bool("dump", false, "print events and exit")
+	jsonFlag := flag.Bool("json", false, "print events as JSON and exit (with -date, -days, -c)")
+	daysFlag := flag.Int("days", 7, "days from the anchor date that -dump and -json cover")
 	notifyFlag := flag.Bool("notify", false, "send tmux notifications for upcoming events in the selected calendar")
 	notifyWindowFlag := flag.Int("notify-window", 15, "fallback minutes-before-start for events with no reminder set (events with reminders use their own)")
 	flag.Parse()
@@ -57,8 +59,23 @@ func main() {
 		fatalf("gcalcli oauth not found at %s. Run gcal.sh init (gcalcli init) first", gcalcliOAuthPath())
 	}
 
+	if *daysFlag < 1 || *daysFlag > 62 {
+		fatalf("invalid -days %d: 1..62", *daysFlag)
+	}
+	if *jsonFlag {
+		end := anchor.AddDate(0, 0, *daysFlag)
+		events, err := fetchEvents(resolveCalendar(calendar), anchor, end)
+		if err != nil {
+			fatalf("%v", err)
+		}
+		if err := writeJSONDump(os.Stdout, resolveCalendar(calendar), anchor, end, events); err != nil {
+			fatalf("%v", err)
+		}
+		return
+	}
+
 	if *dumpFlag {
-		events, err := fetchEvents(resolveCalendar(calendar), anchor, anchor.AddDate(0, 0, 7))
+		events, err := fetchEvents(resolveCalendar(calendar), anchor, anchor.AddDate(0, 0, *daysFlag))
 		if err != nil {
 			fatalf("%v", err)
 		}

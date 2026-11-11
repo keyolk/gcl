@@ -312,6 +312,19 @@ gcl --calendar someone@example.com
 gcl --dump --calendar me --date 2026-07-01
 ```
 
+### 5a. JSON for other tools
+
+```bash
+gcl -json -days 1          # today, as one JSON object
+gcl -json -c team -days 7  # a week of another calendar
+```
+
+`{"calendar", "from", "to", "events": [...]}`; each event has `id`, `title`,
+`start`/`end` (RFC3339) or `date`/`endDate` for all-day (end exclusive),
+`link`, `conference`, `organizer`, `myResponse`, `rooms`, `reminders`, and
+`attendees` (always a list) of `{email, name, response, self, organizer}`.
+`-days` (1..62, default 7) also sets the span of `-dump`.
+
 ### 6. Upcoming event notifications in tmux
 
 ```bash

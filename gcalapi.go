@@ -439,6 +439,7 @@ func apiEventToEvent(calendar string, it apiEvent) *Event {
 
 	var attendees []string
 	var rooms []string
+	var people []Person
 	for _, a := range it.Attendees {
 		if a.Resource {
 			// Meeting rooms / equipment come through as resource attendees.
@@ -457,6 +458,9 @@ func apiEventToEvent(calendar string, it apiEvent) *Event {
 		}
 		if name == "" {
 			continue
+		}
+		if a.Email != "" {
+			people = append(people, Person{Email: a.Email, Name: a.DisplayName, Response: a.ResponseStatus, Self: a.Self, Organizer: a.Organizer})
 		}
 		label := name
 		switch a.ResponseStatus {
@@ -504,6 +508,8 @@ func apiEventToEvent(calendar string, it apiEvent) *Event {
 		HTMLLink:      it.HTMLLink,
 		ConferenceURI: confURI,
 		ReminderMins:  reminderMins,
+		People:        people,
+		Organizer:     it.Organizer.Email,
 	}
 	ev.Links = uniqueLinks([]string{
 		confURI,
