@@ -324,7 +324,7 @@ gcl -json -c team -days 7  # a week of another calendar
 `link`, `conference`, `organizer`, `myResponse`, `rooms`, `reminders`, and
 `attendees` (always a list) of `{email, name, response, self, organizer}`.
 `-days` (1..62, default 7) also sets the span of `-dump`.
-||||||| parent of 43284b1 (feat: gcl rsvp answers an invitation and gcl find proposes times, both as JSON for scripts)
+
 ### 5b. Answer an invitation, find a time (for scripts)
 
 ```bash
