@@ -24,13 +24,19 @@ func main() {
 	daysFlag := flag.Int("days", 7, "days from the anchor date that -dump and -json cover")
 	notifyFlag := flag.Bool("notify", false, "send tmux notifications for upcoming events in the selected calendar")
 	notifyWindowFlag := flag.Int("notify-window", 15, "fallback minutes-before-start for events with no reminder set (events with reminders use their own)")
-	flag.Parse()
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n  gcl [flags]\n  gcl rsvp [-c calendar] <event id> yes|no|maybe\n  gcl find -with a@x.com,b@x.com [-d 30] [-days 14] [-n 10] [-hours 9-19] [-weekdays]\n", appName)
+		flag.PrintDefaults()
+	}
 
 	// Calendar aliases are user-managed in a dotfile (~/.config/<app>/config).
 	// A missing file is seeded with sensible defaults on first run.
 	if _, err := loadConfig(); err != nil {
 		fmt.Fprintf(os.Stderr, appName+": config warning: %v\n", err)
 	}
+	// `gcl rsvp|find …` before flag.Parse, which would stop at the name.
+	exitSubcommand()
+	flag.Parse()
 
 	// Flags win over the config default; -c is shorthand for --calendar.
 	calendar := settings.defaultCalendar
