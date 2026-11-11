@@ -316,7 +316,7 @@ gcl --dump --calendar me --date 2026-07-01
 
 ```bash
 gcl rsvp <event id> yes        # yes|no|maybe; -notify=false to not email the organizer
-gcl find -with a@x.com,b@x.com -d 30 -days 7 -n 5
+gcl find -with a@x.com,b@x.com -d 30 -days 7 -n 5 -hours 9-19 -weekdays
 ```
 
 Both print one JSON object. `rsvp` changes only your own reply and sends every

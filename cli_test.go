@@ -86,3 +86,17 @@ func TestFindOutputNamesWhoIsBlockedAndWhoIsUnreadable(t *testing.T) {
 		t.Fatalf("slots = %#v", back["slots"])
 	}
 }
+
+func TestParseHours(t *testing.T) {
+	for in, want := range map[string][2]int{"9-19": {9, 19}, "0-24": {0, 24}} {
+		a, b, ok := parseHours(in)
+		if !ok || a != want[0] || b != want[1] {
+			t.Fatalf("%q = %d %d %v", in, a, b, ok)
+		}
+	}
+	for _, in := range []string{"", "9", "19-9", "9-25", "-1-5", "9-19x", "09-19"} {
+		if _, _, ok := parseHours(in); ok {
+			t.Fatalf("%q accepted", in)
+		}
+	}
+}

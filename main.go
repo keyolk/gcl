@@ -23,7 +23,7 @@ func main() {
 	notifyFlag := flag.Bool("notify", false, "send tmux notifications for upcoming events in the selected calendar")
 	notifyWindowFlag := flag.Int("notify-window", 15, "fallback minutes-before-start for events with no reminder set (events with reminders use their own)")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n  gcl [flags]\n  gcl rsvp [-c calendar] <event id> yes|no|maybe\n  gcl find -with a@x.com,b@x.com [-d 30] [-days 14] [-n 10]\n", appName)
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n  gcl [flags]\n  gcl rsvp [-c calendar] <event id> yes|no|maybe\n  gcl find -with a@x.com,b@x.com [-d 30] [-days 14] [-n 10] [-hours 9-19] [-weekdays]\n", appName)
 		flag.PrintDefaults()
 	}
 

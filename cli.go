@@ -209,8 +209,10 @@ func cliFind(args []string, stdout, stderr io.Writer, now time.Time) int {
 	dur := fs.Int("d", settings.slotDuration, "meeting length in minutes")
 	days := fs.Int("days", settings.slotSearchDays, "days ahead to search")
 	max := fs.Int("n", 10, "slots to print (most people free first, then soonest)")
+	hours := fs.String("hours", "", "local hours to search, e.g. 9-19 (default: config slot_day_start..slot_day_end)")
+	weekdays := fs.Bool("weekdays", false, "skip Saturday and Sunday (default: config slot_skip_weekends)")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: gcl find -with a@x.com,b@x.com [-d 30] [-days 14] [-n 10]")
+		fmt.Fprintln(stderr, "usage: gcl find -with a@x.com,b@x.com [-d 30] [-days 14] [-n 10] [-hours 9-19] [-weekdays]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -225,6 +227,17 @@ func cliFind(args []string, stdout, stderr io.Writer, now time.Time) int {
 	search.duration = time.Duration(*dur) * time.Minute
 	search.to = now.AddDate(0, 0, *days)
 	search.maxResults = *max
+	if *hours != "" {
+		a, b, ok := parseHours(*hours)
+		if !ok {
+			fmt.Fprintf(stderr, "gcl find: -hours %q is not like 9-19\n", *hours)
+			return 2
+		}
+		search.dayStartHour, search.dayEndHour = a, b
+	}
+	if *weekdays {
+		search.skipWeekends = true
+	}
 	results, err := queryFreeBusy(people, search.from, search.to)
 	if err != nil {
 		fmt.Fprintln(stderr, "gcl find:", err)
@@ -270,6 +283,15 @@ func findOutput(people []string, results []freeBusyResult, search slotSearch) fi
 		out.Slots = append(out.Slots, findSlotOut{Start: s.start.Format(time.RFC3339), End: s.end.Format(time.RFC3339), AllFree: s.allFree(), Busy: s.busy, Unknown: s.unknown})
 	}
 	return out
+}
+
+// parseHours reads "9-19": a start hour 0..23 and an end hour after it, up to 24.
+func parseHours(v string) (int, int, bool) {
+	var a, b int
+	if n, err := fmt.Sscanf(v, "%d-%d", &a, &b); err != nil || n != 2 || fmt.Sprintf("%d-%d", a, b) != v {
+		return 0, 0, false
+	}
+	return a, b, a >= 0 && a <= 23 && b > a && b <= 24
 }
 
 func writeJSON(stdout, stderr io.Writer, v any) int {
