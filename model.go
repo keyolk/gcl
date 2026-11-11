@@ -85,6 +85,20 @@ type Event struct {
 	// event (from reminders.overrides, or the calendar's defaults when the event
 	// uses reminders.useDefault). Empty means no reminder configured.
 	ReminderMins []int
+	// People is the attendee list as the API returns it (email, name, reply,
+	// self/organizer), for -json; Attendees keeps the display labels. Empty
+	// on the gcalcli fallback path, whose TSV has no attendee list.
+	People    []Person
+	Organizer string // organizer email
+}
+
+// Person is one non-resource attendee of an event.
+type Person struct {
+	Email     string `json:"email"`
+	Name      string `json:"name,omitempty"`
+	Response  string `json:"response,omitempty"` // accepted|declined|tentative|needsAction
+	Self      bool   `json:"self,omitempty"`
+	Organizer bool   `json:"organizer,omitempty"`
 }
 
 func (e Event) AllDay() bool { return e.StartTime == "" }
