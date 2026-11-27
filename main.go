@@ -25,7 +25,7 @@ func main() {
 	notifyFlag := flag.Bool("notify", false, "send tmux notifications for upcoming events in the selected calendar")
 	notifyWindowFlag := flag.Int("notify-window", 15, "fallback minutes-before-start for events with no reminder set (events with reminders use their own)")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n  gcl [flags]\n  gcl rsvp [-c calendar] <event id> yes|no|maybe\n  gcl find -with a@x.com,b@x.com [-d 30] [-days 14] [-n 10] [-hours 9-19] [-weekdays]\n", appName)
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n  gcl [flags]\n  gcl login [-client-id ID -client-secret SECRET]\n  gcl rsvp [-c calendar] <event id> yes|no|maybe\n  gcl find -with a@x.com,b@x.com [-d 30] [-days 14] [-n 10] [-hours 9-19] [-weekdays]\n", appName)
 		flag.PrintDefaults()
 	}
 
@@ -59,10 +59,9 @@ func main() {
 		anchor = parsed
 	}
 
-	// We reach the Calendar API directly using gcalcli's stored OAuth. gcalcli
-	// itself is only needed as a fallback, so just ensure the oauth exists.
-	if _, err := os.Stat(gcalcliOAuthPath()); err != nil {
-		fatalf("gcalcli oauth not found at %s. Run gcal.sh init (gcalcli init) first", gcalcliOAuthPath())
+	// The Calendar API needs a sign-in: gcl's own (`gcl login`) or gcalcli's.
+	if _, err := loadOAuthCreds(); err != nil {
+		fatalf("%v", err)
 	}
 
 	if *daysFlag < 1 || *daysFlag > 62 {

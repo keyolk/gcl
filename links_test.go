@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"regexp"
 	"strings"
 	"testing"
@@ -191,8 +192,17 @@ func TestLinkPickerRowsLinkAndOpen(t *testing.T) {
 // In the week grid a cell is "time title": only the title is the link.
 func TestGridCellLinksOnlyTheTitle(t *testing.T) {
 	m := linkedModel(t)
+	// The fixture's events are tomorrow. On a Friday that is Saturday, the
+	// last column, which the detail split cuts to "10:0…": the test failed
+	// every Friday. Put Bravo on the Wednesday of this week instead.
+	wed := weekStart(today()).AddDate(0, 0, 3)
+	// Round: a DST day is 23 or 25 hours.
+	b := mouseEvent("b", "Bravo review", int(math.Round(wed.Sub(today()).Hours()/24)))
+	b.HTMLLink, b.Links = m.events[1].HTMLLink, m.events[1].Links
+	m.events = []Event{b}
+	m.selected, m.anchor = 0, wed
 	m.view = viewWeek
-	m.gridTop = weekStart(today())
+	m.gridTop = weekStart(wed)
 	out := m.View()
 	if !strings.Contains(out, "10:00 "+"\x1b]8;;"+bravoURL+"\x1b\\Bra") {
 		t.Fatalf("grid cell does not link the title after its time:\n%q", out)

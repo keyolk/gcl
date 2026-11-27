@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -17,15 +16,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// Google Calendar access reusing gcalcli's stored OAuth credentials.
+// Google Calendar access with gcl's own sign-in (auth.go) or gcalcli's.
 //
-// gcalcli saves a pickled google.oauth2.credentials.Credentials at
-// "$HOME/Library/Application Support/gcalcli/oauth". We do not need a real
-// pickle parser: the fields we want are stored as SHORT_BINUNICODE strings, so
-// we extract client_id / client_secret / refresh_token by scanning for the
-// known keys. Then we mint access tokens via the OAuth token endpoint and call
-// the Calendar v3 REST API directly — this reaches calendars that are readable
-// but NOT subscribed in gcalcli (the whole reason gcalcli returned nothing).
+// gcalcli saves a pickled google.oauth2.credentials.Credentials (paths in
+// gcalcliOAuthPaths). We do not need a real pickle parser: the fields we want
+// are stored as SHORT_BINUNICODE strings, so we extract client_id /
+// client_secret / refresh_token by scanning for the known keys. Then we mint
+// access tokens via the OAuth token endpoint and call the Calendar v3 REST API
+// directly — this reaches calendars that are readable but NOT subscribed in
+// gcalcli (the whole reason gcalcli returned nothing).
 
 type oauthCreds struct {
 	ClientID     string
@@ -42,14 +41,6 @@ type tokenCache struct {
 }
 
 var googleToken = &tokenCache{}
-
-func gcalcliOAuthPath() string {
-	if v := os.Getenv("GCALCLI_OAUTH"); v != "" {
-		return v
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Library", "Application Support", "gcalcli", "oauth")
-}
 
 // nextSBU returns the SHORT_BINUNICODE string that immediately follows the given
 // key marker in the pickle byte stream. Layout per value:
@@ -85,11 +76,8 @@ func indexBytes(haystack, needle []byte) int {
 	return strings.Index(string(haystack), string(needle))
 }
 
-func loadOAuthCreds() (*oauthCreds, error) {
-	data, err := os.ReadFile(gcalcliOAuthPath())
-	if err != nil {
-		return nil, fmt.Errorf("read gcalcli oauth: %w", err)
-	}
+// gcalcliCreds reads the client and refresh token out of gcalcli's pickle.
+func gcalcliCreds(data []byte) (*oauthCreds, error) {
 	c := &oauthCreds{
 		ClientID:     extractPickleString(data, "_client_id"),
 		ClientSecret: extractPickleString(data, "_client_secret"),
@@ -97,7 +85,7 @@ func loadOAuthCreds() (*oauthCreds, error) {
 		TokenURI:     extractPickleString(data, "_token_uri"),
 	}
 	if c.TokenURI == "" {
-		c.TokenURI = "https://oauth2.googleapis.com/token"
+		c.TokenURI = googleTokenURL
 	}
 	if c.ClientID == "" || c.ClientSecret == "" || c.RefreshToken == "" {
 		return nil, errors.New("could not extract client_id/secret/refresh_token from gcalcli oauth")
