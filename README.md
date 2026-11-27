@@ -132,24 +132,38 @@ question a maintenance-window calendar is read for. Every list row gets a mini
 
 ## Authentication model
 
-This app **does not** ask you to do a separate login flow.
+gcl needs a Google sign-in with Calendar access. It uses the first it finds:
 
-Instead, it reuses the OAuth credentials stored by `gcalcli` at:
+1. its own, from `gcl login`: `~/.config/gcl/token.json` (`$GCL_TOKEN` overrides)
+2. gcalcli's stored sign-in, at the path gcalcli uses on this OS
+   (`$GCALCLI_OAUTH` overrides):
+   - macOS: `~/Library/Application Support/gcalcli/oauth`
+   - Linux: `$XDG_DATA_HOME/gcalcli/oauth` (default `~/.local/share/gcalcli/oauth`)
+   - older gcalcli: `~/.gcalcli_oauth`
 
-```text
-~/Library/Application Support/gcalcli/oauth
+So an existing gcalcli setup keeps working, and a host without gcalcli (a
+Linux workspace, a new laptop) signs in with gcl alone:
+
+```bash
+gcl login                                   # browser sign-in, saves token.json
+gcl login -client-id ID -client-secret S    # with an OAuth client of your own
+warren auth <workspace> -- gcl login        # in a warren workspace, browser on the laptop
 ```
 
-At runtime it:
+`gcl login` takes the OAuth client from its flags, `GCL_CLIENT_ID` /
+`GCL_CLIENT_SECRET`, an earlier `gcl login`, or gcalcli's sign-in, and asks
+for one when there is none (a "Desktop app" client from Google Cloud Console >
+APIs & Services > Credentials, with the Calendar API enabled). It runs the
+installed-app flow: a loopback redirect to `127.0.0.1` with PKCE.
 
-1. reads the stored OAuth credential pickle
-2. extracts `client_id`, `client_secret`, and `refresh_token`
-3. refreshes an access token against Google OAuth
-4. calls the Google Calendar v3 API directly
+At runtime gcl:
+
+1. reads the client and refresh token
+2. refreshes an access token against Google OAuth
+3. calls the Google Calendar v3 API directly
 
 This means:
 
-- you keep using your existing `gcalcli` login setup
 - calendars readable via API but not subscribed in `gcalcli` can still work
 - attendees and event metadata are available more richly than the plain `gcalcli`
   agenda output
@@ -251,24 +265,8 @@ Two ways to run them:
 ## Requirements
 
 - Go 1.25+
-- `gcalcli` already initialized
-- a valid `gcalcli` OAuth file at:
-
-```text
-~/Library/Application Support/gcalcli/oauth
-```
-
-If you don't have that yet, initialize your existing flow first, e.g. via:
-
-```bash
-gcal.sh init
-```
-
-or directly:
-
-```bash
-gcalcli init
-```
+- a Google sign-in: `gcl login`, or an initialized `gcalcli` (see
+  [Authentication model](#authentication-model))
 
 ## Getting started
 

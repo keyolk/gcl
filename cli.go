@@ -34,6 +34,8 @@ func runSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		return false, 0
 	}
 	switch args[0] {
+	case "login":
+		return true, cliLogin(args[1:], stdout, stderr)
 	case "rsvp":
 		return true, cliRSVP(args[1:], stdout, stderr)
 	case "find":
